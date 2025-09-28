@@ -22,6 +22,13 @@ interface WalletInfo {
   balance: number;
 }
 
+interface UserInfo {
+  username: string;
+  full_name?: string;
+  avatar_seed?: string;
+  has_claimed_airdrop?: boolean;
+}
+
 interface Transaction {
   sender_username: string;
   recipient_username: string;
@@ -34,7 +41,7 @@ interface Transaction {
 
 export default function WalletScreen() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,6 +50,8 @@ export default function WalletScreen() {
   const [recipientUsername, setRecipientUsername] = useState('');
   const [memo, setMemo] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
+  const [solToUsdRate] = useState(20); // Mock SOL to USD rate
 
   useEffect(() => {
     loadWalletData();
@@ -92,31 +101,43 @@ export default function WalletScreen() {
     loadWalletData();
   };
 
-  const requestAirdrop = async () => {
+  const claimInitialAirdrop = async () => {
     try {
-      setIsLoading(true);
-      const response = await apiClient.post('/wallet/airdrop', { amount: 1.0 });
+      setIsClaiming(true);
+      const response = await apiClient.post('/wallet/claim-airdrop');
       Alert.alert(
-        'Airdrop Success! 🎉', 
-        `1 SOL has been added to your wallet.\n\nTransaction: ${response.data.transaction_signature.slice(0, 8)}...`,
+        'Welcome Bonus Claimed! 🎉', 
+        `0.5 SOL has been added to your wallet.\n\nTransaction: ${response.data.transaction_signature.slice(0, 8)}...`,
         [{ text: 'OK', style: 'default' }]
       );
-      setTimeout(() => loadWalletData(), 2000); // Refresh after 2 seconds
+      // Refresh both wallet data and user data to update the UI
+      await Promise.all([
+        loadWalletData(),
+        refreshUser()
+      ]);
     } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || 'Failed to request airdrop';
-      
-      // Show user-friendly error with helpful actions
-      Alert.alert(
-        'Airdrop Failed ❌',
-        errorMessage,
-        [
-          { text: 'Try Again', onPress: () => requestAirdrop(), style: 'default' },
-          { text: 'Cancel', style: 'cancel' }
-        ]
-      );
+      const errorMessage = error.response?.data?.detail || 'Failed to claim welcome bonus';
+      Alert.alert('Claim Failed ❌', errorMessage, [{ text: 'OK', style: 'default' }]);
     } finally {
-      setIsLoading(false);
+      setIsClaiming(false);
     }
+  };
+
+  const handleWithdraw = async () => {
+    Alert.alert(
+      'Withdraw SOL',
+      'Enter the amount you want to withdraw to your external wallet.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Continue', 
+          onPress: () => {
+            // This would open a withdrawal form/modal
+            Alert.alert('Coming Soon', 'Withdrawal feature will be available soon!');
+          }
+        }
+      ]
+    );
   };
 
   const handleTransfer = async () => {
@@ -134,11 +155,8 @@ export default function WalletScreen() {
     if (walletInfo && amount > walletInfo.balance) {
       Alert.alert(
         'Insufficient Balance ❌', 
-        `You need ${amount} SOL but only have ${walletInfo.balance.toFixed(4)} SOL.\n\nRequest an airdrop first?`,
-        [
-          { text: 'Request Airdrop', onPress: requestAirdrop, style: 'default' },
-          { text: 'Cancel', style: 'cancel' }
-        ]
+        `You need ${amount} SOL but only have ${walletInfo.balance.toFixed(4)} SOL.`,
+        [{ text: 'OK', style: 'default' }]
       );
       return;
     }
@@ -202,23 +220,24 @@ export default function WalletScreen() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
-        {/* Header */}
+        {/* Header with User Info */}
         <View style={styles.header}>
+          {user?.avatar_seed && <Avatar seed={user.avatar_seed} size={64} />}
           <View style={styles.headerContent}>
-            <Text style={styles.title}>Solana Wallet</Text>
-            <Text style={styles.subtitle}>Send SOL to friends</Text>
+            <Text style={styles.userName}>{user?.full_name || user?.username}</Text>
+            <Text style={styles.userHandle}>@{user?.username}</Text>
           </View>
-          {user?.avatar_seed && <Avatar seed={user.avatar_seed} size={56} />}
         </View>
 
         {/* Wallet Balance Card */}
         {walletInfo && (
           <View style={styles.balanceCard}>
             <View style={styles.balanceHeader}>
-              <Ionicons name="wallet" size={24} color={colors.primary} />
-              <Text style={styles.balanceLabel}>SOL Balance</Text>
+              <Ionicons name="wallet" size={24} color={colors.neon} />
+              <Text style={styles.balanceLabel}>Wallet Balance</Text>
             </View>
-            <Text style={styles.balanceAmount}>{walletInfo.balance.toFixed(4)} SOL</Text>
+            <Text style={styles.balanceAmountUSD}>${(walletInfo.balance * solToUsdRate).toFixed(2)}</Text>
+            <Text style={styles.balanceAmountSOL}>{walletInfo.balance.toFixed(4)} SOL</Text>
             <Text style={styles.walletAddress}>
               {formatAddress(walletInfo.public_key)}
             </Text>
@@ -227,9 +246,26 @@ export default function WalletScreen() {
 
         {/* Actions */}
         <View style={styles.actionsSection}>
-          <TouchableOpacity style={styles.airdropButton} onPress={requestAirdrop} disabled={isLoading}>
-            <Ionicons name="cloud-download" size={20} color={colors.bg} />
-            <Text style={styles.airdropButtonText}>Request Airdrop (1 SOL)</Text>
+          {!user?.has_claimed_airdrop && (
+            <TouchableOpacity 
+              style={styles.claimButton} 
+              onPress={claimInitialAirdrop} 
+              disabled={isClaiming}
+            >
+              {isClaiming ? (
+                <ActivityIndicator size="small" color="#1A1F3A" />
+              ) : (
+                <Ionicons name="gift" size={20} color="#1A1F3A" />
+              )}
+              <Text style={styles.claimButtonText}>
+                {isClaiming ? 'Claiming...' : 'Claim Welcome Bonus (0.5 SOL)'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          <TouchableOpacity style={styles.withdrawButton} onPress={handleWithdraw}>
+            <Ionicons name="arrow-up" size={20} color={colors.text} />
+            <Text style={styles.withdrawButtonText}>Withdraw</Text>
           </TouchableOpacity>
         </View>
 
@@ -371,6 +407,16 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 16,
   },
+  userName: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  userHandle: {
+    color: colors.textMuted,
+    fontSize: 16,
+  },
   balanceCard: {
     backgroundColor: colors.card,
     padding: 24,
@@ -396,6 +442,17 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: 8,
   },
+  balanceAmountUSD: {
+    color: colors.text,
+    fontSize: 32,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  balanceAmountSOL: {
+    color: colors.textMuted,
+    fontSize: 16,
+    marginBottom: 8,
+  },
   walletAddress: {
     color: colors.textMuted,
     fontSize: 14,
@@ -415,6 +472,37 @@ const styles = StyleSheet.create({
   },
   airdropButtonText: {
     color: colors.bg,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  claimButton: {
+    backgroundColor: colors.neon,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 12,
+    gap: 8,
+    marginBottom: 12,
+  },
+  claimButtonText: {
+    color: '#1A1F3A',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  withdrawButton: {
+    backgroundColor: colors.card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  withdrawButtonText: {
+    color: colors.text,
     fontSize: 16,
     fontWeight: '600',
   },

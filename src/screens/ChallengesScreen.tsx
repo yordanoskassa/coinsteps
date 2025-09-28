@@ -3,135 +3,229 @@ import {
   View, 
   Text, 
   StyleSheet, 
-  TextInput, 
   TouchableOpacity, 
   FlatList, 
   Alert,
   ActivityIndicator,
   RefreshControl,
-  Modal
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import GradientBackground from '../components/GradientBackground';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import { api as apiClient } from '../services/apiClient';
-import Avatar from '../components/Avatar';
+import { ChallengeService, Challenge } from '../services/challengeService';
+import CreateChallengeModal from '../components/CreateChallengeModal';
+import ActiveChallenges from '../components/ActiveChallenges';
 
 export default function ChallengesScreen() {
   const insets = useSafeAreaInsets();
-  const [title, setTitle] = useState('Daily Duel');
-  const [stake, setStake] = useState('10');
-  const [goal, setGoal] = useState('8000');
   const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  const load = async () => setChallenges(await getChallenges());
-  useEffect(() => { load(); }, []);
+  const loadChallenges = async () => {
+    try {
+      setLoading(true);
+      const userChallenges = await ChallengeService.getUserChallenges();
+      setChallenges(userChallenges);
+    } catch (error) {
+      console.error('Failed to load challenges:', error);
+      Alert.alert('Error', 'Failed to load challenges. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const onCreate = async () => {
-    const item: Challenge = {
-      id: Math.random().toString(36).slice(2),
-      title,
-      stake: Number(stake || '0'),
-      goal: Number(goal || '0'),
-      participants: [
-        { id: 'me', name: 'You', steps: 0 },
-        { id: 'p2', name: 'Rival', steps: 0 },
-      ],
-      date: new Date().toISOString().slice(0, 10),
-      status: 'active',
-    };
-    await addChallenge(item);
-    setTitle('Daily Duel');
-    await load();
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadChallenges();
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    loadChallenges();
+  }, []);
+
+  const handleChallengeCreated = () => {
+    setShowCreateModal(false);
+    loadChallenges();
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return colors.success;
+      case 'pending': return colors.warning;
+      case 'completed': return colors.primary;
+      default: return colors.textMuted;
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
   };
 
   return (
     <GradientBackground>
       <View style={[styles.container, { paddingTop: insets.top + 16 }]}> 
-        <Text style={styles.header}>Challenges</Text>
-
-        <View style={styles.formRow}>
-          <Input label="Title" value={title} onChangeText={setTitle} placeholder="10k Steps Showdown" />
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Input label="Stake" value={stake} onChangeText={setStake} keyboardType="numeric" placeholder="10" style={{ flex: 1 }} />
-            <Input label="Goal" value={goal} onChangeText={setGoal} keyboardType="numeric" placeholder="10000" style={{ flex: 1 }} />
-          </View>
-          <TouchableOpacity style={styles.button} onPress={onCreate}>
-            <Ionicons name="sparkles" size={18} color="#fff" />
-            <Text style={styles.buttonText}>Create Challenge</Text>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Challenges</Text>
+          <TouchableOpacity 
+            style={styles.createButton} 
+            onPress={() => setShowCreateModal(true)}
+          >
+            <Ionicons name="add" size={20} color="#fff" />
+            <Text style={styles.createButtonText}>Create</Text>
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={challenges}
-          keyExtractor={(i) => i.id}
-          contentContainerStyle={{ paddingBottom: 120 }}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              <Text style={styles.cardSub}>Goal {item.goal.toLocaleString()} steps • Stake {item.stake} coins</Text>
-              <View style={styles.rowBetween}>
-                <Text style={styles.participants}>{item.participants.map(p => p.name).join(' vs ')}</Text>
-                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        <ActiveChallenges onRefresh={loadChallenges} />
+
+        {loading ? (
+          <ActivityIndicator style={styles.loader} color={colors.primary} />
+        ) : (
+          <FlatList
+            data={challenges}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingBottom: 120 }}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            renderItem={({ item }) => (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.statusBadge}>
+                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
+                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+                      {item.status.toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.dateText}>{formatDate(item.createdAt)}</Text>
+                </View>
+                
+                <Text style={styles.cardTitle}>
+                  {item.metrics.join(', ').toUpperCase()} Challenge
+                </Text>
+                
+                <Text style={styles.cardSub}>
+                  Target: {item.target} • Stake: {item.stake} SOL • Duration: {item.duration}h
+                </Text>
+                
+                <View style={styles.rowBetween}>
+                  <Text style={styles.participants}>
+                    {item.participants.length} participant{item.participants.length !== 1 ? 's' : ''}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                </View>
               </View>
-            </View>
-          )}
-          ListEmptyComponent={<Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 24 }}>No challenges yet. Create your first!</Text>}
+            )}
+            ListEmptyComponent={
+              <Text style={styles.emptyText}>
+                No challenges yet. Create your first challenge to get started!
+              </Text>
+            }
+          />
+        )}
+
+        <CreateChallengeModal
+          visible={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          onChallengeCreated={handleChallengeCreated}
         />
       </View>
     </GradientBackground>
   );
 }
 
-function Input({ label, style, ...props }: any) {
-  return (
-    <View style={[{ gap: 6 }, style]}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        {...props}
-        placeholderTextColor={colors.textMuted}
-        style={styles.input}
-      />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 20 },
-  header: { color: colors.text, fontSize: 24, fontWeight: '800', marginBottom: 16 },
-  formRow: { gap: 12, marginBottom: 12 },
-  label: { color: colors.textMuted, fontSize: 12 },
-  input: {
-    backgroundColor: '#0F1130',
-    color: colors.text,
-    borderRadius: 12,
-    padding: 12,
-    borderColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1
+  header: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 16 
   },
-  button: {
+  headerTitle: { 
+    color: colors.text, 
+    fontSize: 24, 
+    fontWeight: '800' 
+  },
+  createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    gap: 8,
-    marginTop: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 6,
   },
-  buttonText: { color: '#fff', fontWeight: '700' },
+  createButtonText: { 
+    color: '#fff', 
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  loader: {
+    marginVertical: 20,
+  },
   card: {
-    backgroundColor: '#111335',
+    backgroundColor: colors.card,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    padding: 14,
+    padding: 16,
     marginTop: 12,
   },
-  cardTitle: { color: colors.text, fontWeight: '700' },
-  cardSub: { color: colors.textMuted, marginTop: 4 },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
-  participants: { color: colors.text },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dateText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  cardTitle: { 
+    color: colors.text, 
+    fontWeight: '700',
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  cardSub: { 
+    color: colors.textMuted, 
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  rowBetween: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between',
+  },
+  participants: { 
+    color: colors.text,
+    fontSize: 14,
+  },
+  emptyText: {
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 16,
+    lineHeight: 24,
+  },
 });

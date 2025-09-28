@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -56,28 +56,48 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         print("DEBUG: No credentials provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
+            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    token = credentials.credentials
+    print(f"DEBUG: Token received: {token[:20]}...")
+    
     try:
-        token = credentials.credentials
-        print(f"DEBUG: Received token: {token[:20]}..." if token else "No token")
         token_data = verify_token(token)
         print(f"DEBUG: Token verified for user: {token_data.username}")
-        user = await db.users.find_one({"username": token_data.username})
-        if user is None:
+        
+        # Get user from database
+        user_doc = await db.users.find_one({"username": token_data.username})
+        if user_doc is None:
             print(f"DEBUG: User not found in database: {token_data.username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        
+        # Remove MongoDB _id field and convert to User model
+        user_doc.pop("_id", None)
+        # Ensure sol_balance exists for existing users
+        if "sol_balance" not in user_doc:
+            user_doc["sol_balance"] = 0.0
+            # Update the database with the new field
+            await db.users.update_one(
+                {"username": token_data.username},
+                {"$set": {"sol_balance": 0.0}}
+            )
+        user = User(**user_doc)
+        print(f"DEBUG: User loaded: {user.username}")
+        return user
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"DEBUG: Auth error: {str(e)}")
+        print(f"DEBUG: Token verification failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication failed: {str(e)}",
+            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -109,30 +129,96 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return User(**user)
 
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-# Authentication endpoints
+@app.post("/test-email")
+async def test_email_sending():
+    """Test endpoint to verify AgentMail integration with AI-generated content"""
+    try:
+        challenge_data = {
+            "type": "Weekend Warrior Challenge",
+            "target": "15,000",
+            "duration": "72",
+            "stakeAmount": "5.0",
+            "id": "test-challenge-789",
+            "message": "Yordanos! It's time for our epic weekend challenge! I'm feeling confident about this one - think you can keep up? Winner takes all! 🏆"
+        }
+        
+        result = await agentmail_client.send_challenge_invitation(
+            recipient_email="kassay@mail.gvsu.edu",
+            recipient_name="Yordanos",
+            challenge_data=challenge_data,
+            sender_name="Sarah"
+        )
+        
+        return {"success": True, "result": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/test-challenge-creation")
+async def test_challenge_creation():
+    """Test endpoint to verify end-to-end challenge creation with email invitations"""
+    try:
+        # Simulate challenge creation data
+        test_challenge_data = {
+            "metrics": ["steps"],
+            "duration": 24,
+            "stake": 0.5,
+            "friends": ["kassay@mail.gvsu.edu"],
+            "message": "Ready for a fun fitness challenge? Let's see who can get more steps!"
+        }
+        
+        # Create mock challenge record
+        challenge_record = {
+            "id": str(uuid.uuid4()),
+            "type": "Steps Challenge", 
+            "target": 10000,
+            "duration": test_challenge_data["duration"],
+            "stake": test_challenge_data["stake"],
+            "message": test_challenge_data["message"]
+        }
+        
+        # Send invitations
+        await send_challenge_invitations(
+            challenge_record=challenge_record,
+            friend_emails=test_challenge_data["friends"],
+            sender_name="Test User"
+        )
+        
+        return {
+            "success": True, 
+            "message": "Test challenge created and invitations sent",
+            "challenge_id": challenge_record["id"]
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.post("/auth/register", response_model=Token)
 async def register(user: UserCreate):
-    # Check if user already exists
+    # Check if username already exists
     existing_user = await db.users.find_one({"username": user.username})
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
         )
+
+    # Note: We intentionally allow multiple accounts to share the same email address.
+    # This removes the uniqueness constraint on email.
     
     # Create new user with avatar seed
     import uuid
     hashed_password = get_password_hash(user.password)
-    avatar_seed = str(uuid.uuid4())  # Generate unique avatar seed
+    # Use provided avatar_seed or generate a unique one if not provided
+    avatar_seed = user.avatar_seed if user.avatar_seed else str(uuid.uuid4())
     user_doc = {
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
         "avatar_seed": avatar_seed,
         "hashed_password": hashed_password,
+        "sol_balance": 10.0,  # Give new users 10 SOL to start
         "created_at": datetime.utcnow().isoformat()
     }
     
@@ -157,9 +243,23 @@ async def login(user: UserLogin):
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/auth/me", response_model=User)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+@app.get("/users/me")
+async def get_current_user(current_user: User = Depends(get_current_user)):
     return current_user
+
+@app.get("/users")
+async def get_all_users(current_user: User = Depends(get_current_user)):
+    """Get all registered users for friend selection"""
+    users = await User.find_all().to_list()
+    # Return users excluding the current user and only include necessary fields
+    return [
+        {
+            "id": str(user.id),
+            "username": user.username,
+            "email": user.email
+        }
+        for user in users if str(user.id) != str(current_user.id)
+    ]
 
 
 @app.post("/steps")
@@ -352,16 +452,34 @@ async def create_wallet(current_user: User = Depends(get_current_user)):
 async def get_wallet_info(current_user: User = Depends(get_current_user)):
     """Get wallet information"""
     if not current_user.wallet_public_key:
-        raise HTTPException(status_code=404, detail="User does not have a wallet")
+        # Auto-create wallet for user if they don't have one
+        wallet_data = wallet_service.create_wallet()
+        
+        # Update user with wallet info
+        await db.users.update_one(
+            {"username": current_user.username},
+            {
+                "$set": {
+                    "wallet_public_key": wallet_data["public_key"],
+                    "encrypted_private_key": wallet_data["encrypted_private_key"],
+                    "sol_balance": 1.0  # Give new users 1 SOL to start
+                }
+            }
+        )
+        
+        # Update current_user object
+        current_user.wallet_public_key = wallet_data["public_key"]
+        current_user.sol_balance = 1.0
     
     # Get on-chain balance
     balance = await wallet_service.get_balance(current_user.wallet_public_key)
     
-    # Add simulated balance for testing (when devnet faucet is down)
+    # Use SOL balance from database (includes both on-chain and simulated balance)
     user_data = await db.users.find_one({"username": current_user.username})
-    simulated_balance = user_data.get("simulated_balance", 0.0) if user_data else 0.0
+    sol_balance = user_data.get("sol_balance", 0.0) if user_data else 0.0
     
-    total_balance = balance + simulated_balance
+    # For now, prioritize database balance over on-chain balance for demo purposes
+    total_balance = sol_balance if sol_balance > 0 else balance
     
     return WalletInfo(
         public_key=current_user.wallet_public_key,
@@ -370,7 +488,6 @@ async def get_wallet_info(current_user: User = Depends(get_current_user)):
 
 @app.post("/wallet/airdrop")
 async def request_airdrop(amount: float = 1.0, current_user: User = Depends(get_current_user)):
-    """Request SOL airdrop (testnet)"""
     if not current_user.wallet_public_key:
         raise HTTPException(status_code=404, detail="User does not have a wallet")
     
@@ -393,6 +510,32 @@ async def request_airdrop(amount: float = 1.0, current_user: User = Depends(get_
             error_msg = f"Testnet airdrop unavailable: {error_msg}\n\nTry the web faucet: https://faucet.solana.com"
         
         raise HTTPException(status_code=400, detail=error_msg)
+    
+    return result
+
+@app.post("/wallet/claim-airdrop")
+async def claim_initial_airdrop(current_user: User = Depends(get_current_user)):
+    if not current_user.wallet_public_key:
+        raise HTTPException(status_code=404, detail="User does not have a wallet")
+    
+    # Check if user has already claimed their initial airdrop
+    user_doc = await db.users.find_one({"username": current_user.username})
+    if user_doc and user_doc.get("has_claimed_airdrop", False):
+        raise HTTPException(status_code=400, detail="Initial airdrop already claimed")
+    
+    # Airdrop 0.5 SOL for first-time claim
+    result = await wallet_service.airdrop_sol(current_user.wallet_public_key, 0.5)
+    
+    if result["status"] == "error":
+        error_msg = result["error"]
+        print(f"Initial airdrop error for user {current_user.username}: {error_msg}")
+        raise HTTPException(status_code=400, detail=f"Failed to claim initial airdrop: {error_msg}")
+    
+    # Mark user as having claimed their initial airdrop
+    await db.users.update_one(
+        {"username": current_user.username},
+        {"$set": {"has_claimed_airdrop": True}}
+    )
     
     return result
 
@@ -511,7 +654,52 @@ betting_client = StepBettingClient()
 # Initialize oracle keypair for health verification
 oracle_keypair = wallet_service.generate_keypair()  # In production, load from secure storage
 from health_verifier import HealthDataVerifier, HealthDataSubmission
+from health_ai import HealthAIAnalyzer
+from agentmail_client import AgentMailClient
+from challenge_agent import ChallengeAgent
+
+# Initialize AgentMail client
+agentmail_client = AgentMailClient()
 health_verifier = HealthDataVerifier(oracle_keypair)
+health_ai = HealthAIAnalyzer()
+challenge_agent = ChallengeAgent(client)
+
+# Helper function to send challenge invitations
+async def send_challenge_invitations(challenge_record: dict, friend_emails: List[str], sender_name: str):
+    """Send email invitations to friends for a challenge"""
+    try:
+        # Prepare challenge data for email template
+        email_challenge_data = {
+            "id": challenge_record["id"],
+            "type": challenge_record.get("type", "Steps Challenge"),
+            "target": str(challenge_record.get("target", 10000)),
+            "duration": str(challenge_record["duration"]),
+            "stakeAmount": str(challenge_record["stake"]),
+            "message": challenge_record.get("message", "")
+        }
+        
+        # Send invitation to each friend
+        for friend_email in friend_emails:
+            try:
+                # Extract name from email if no name provided
+                friend_name = friend_email.split('@')[0].title()
+                
+                result = await agentmail_client.send_challenge_invitation(
+                    recipient_email=friend_email,
+                    recipient_name=friend_name,
+                    challenge_data=email_challenge_data,
+                    sender_name=sender_name
+                )
+                
+                print(f"Sent invitation to {friend_email}: {result}")
+                
+            except Exception as e:
+                print(f"Failed to send invitation to {friend_email}: {str(e)}")
+                # Continue sending to other friends even if one fails
+                
+    except Exception as e:
+        print(f"Error in send_challenge_invitations: {str(e)}")
+        # Don't raise exception to avoid breaking challenge creation
 
 
 # Step Betting Smart Contract Endpoints
@@ -525,61 +713,28 @@ class ChallengeJoin(BaseModel):
 
 class StepsSubmission(BaseModel):
     challenge_address: str
-    steps_count: int
-    health_data: dict  # HealthKit or other verification data
-    device_info: dict  # Device information for integrity checks
+    steps: int
+    date: str  # YYYY-MM-DD format
+    source: str = "healthkit"
 
-@app.post("/challenges/create")
-async def create_challenge(
-    challenge_data: ChallengeCreate,
-    current_user: User = Depends(get_current_user)
-):
-    """Create a new step challenge with smart contract escrow"""
-    if not current_user.wallet_public_key:
-        raise HTTPException(status_code=400, detail="User must have a wallet to create challenges")
-    
-    # Get user's wallet keypair
-    user_keypair = wallet_service.get_user_keypair(current_user.username)
-    if not user_keypair:
-        raise HTTPException(status_code=400, detail="Could not access user wallet")
-    
-    # Convert SOL to lamports
-    stake_lamports = int(challenge_data.stake_amount * 1_000_000_000)
-    
-    # Create challenge on blockchain with oracle
-    result = await betting_client.create_challenge(
-        user_keypair,
-        challenge_data.target_steps,
-        stake_lamports,
-        challenge_data.duration_hours,
-        oracle_keypair.public_key
-    )
-    
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=f"Failed to create challenge: {result['error']}")
-    
-    # Store challenge in database
-    challenge_record = {
-        "challenge_address": result["challenge_address"],
-        "creator_username": current_user.username,
-        "target_steps": challenge_data.target_steps,
-        "stake_amount": challenge_data.stake_amount,
-        "duration_hours": challenge_data.duration_hours,
-        "created_at": datetime.utcnow().isoformat(),
-        "transaction_signature": result["transaction_signature"],
-        "status": "active",
-        "participants": [current_user.username]
-    }
-    
-    await db.challenges.insert_one(challenge_record)
-    
-    return {
-        "success": True,
-        "challenge_address": result["challenge_address"],
-        "transaction_signature": result["transaction_signature"],
-        "target_steps": challenge_data.target_steps,
-        "stake_amount": challenge_data.stake_amount
-    }
+# New flexible betting system
+class BetCreate(BaseModel):
+    bet_type: str  # steps, heart_rate, sleep, etc.
+    target: float
+    unit: str
+    stake_amount: float  # SOL amount
+    duration_hours: int = 168  # Default 1 week
+    multiplier: float
+    difficulty: str
+    description: str
+
+class HealthDataSubmission(BaseModel):
+    bet_id: str
+    health_data: dict  # Flexible health data structure
+    date: str  # YYYY-MM-DD format
+    source: str = "healthkit"  # Source of health data
+    device_info: dict = {}  # Device information for integrity checks
+
 
 @app.post("/challenges/join")
 async def join_challenge(
@@ -649,12 +804,10 @@ async def submit_steps(
     
     # Create health data submission for verification
     health_submission = HealthDataSubmission(
-        username=current_user.username,
-        challenge_address=submission.challenge_address,
-        steps_count=submission.steps_count,
-        date=datetime.utcnow().strftime("%Y-%m-%d"),
-        source=submission.health_data.get("source", "manual"),
-        raw_data=submission.health_data,
+        bet_id="",
+        health_data=submission.health_data,
+        date=submission.date,
+        source=submission.source,
         device_info=submission.device_info,
         timestamp=datetime.utcnow()
     )
@@ -666,7 +819,7 @@ async def submit_steps(
     submission_record = {
         "challenge_address": submission.challenge_address,
         "username": current_user.username,
-        "steps_count": submission.steps_count,
+        "steps_count": submission.steps,
         "health_data": submission.health_data,
         "device_info": submission.device_info,
         "verification_id": verification_result["verification_id"],
@@ -678,10 +831,8 @@ async def submit_steps(
     
     return {
         "success": True,
-        "verification_id": verification_result["verification_id"],
-        "status": "pending_verification",
-        "estimated_completion": verification_result["estimated_completion"].isoformat(),
-        "steps_submitted": submission.steps_count
+        "message": "Health data submitted for verification",
+        "verification_status": "pending"
     }
 
 @app.get("/challenges")
@@ -708,3 +859,797 @@ async def get_challenges(
         result.append(challenge)
     
     return result
+
+# New flexible betting endpoints
+@app.post("/bets/place")
+async def place_bet(
+    bet_data: BetCreate,
+    current_user: User = Depends(get_current_user)
+):
+    """Place a new health-based bet"""
+    # Check if user has sufficient balance
+    if current_user.sol_balance < bet_data.stake_amount:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Insufficient balance. You have {current_user.sol_balance} SOL but need {bet_data.stake_amount} SOL"
+        )
+    
+    if current_user.sol_balance <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot place bet with zero balance. Please add funds to your account."
+        )
+    
+    if not current_user.wallet_public_key:
+        raise HTTPException(status_code=400, detail="User must have a wallet to place bets")
+    
+    # Get user's wallet keypair
+    user_keypair = wallet_service.get_user_keypair(current_user.username)
+    if not user_keypair:
+        raise HTTPException(status_code=400, detail="Could not access user wallet")
+    
+    # Convert SOL to lamports
+    stake_lamports = int(bet_data.stake_amount * 1_000_000_000)
+    
+    # Generate unique bet ID
+    bet_id = str(uuid.uuid4())
+    
+    # Calculate expiration time
+    expires_at = datetime.utcnow() + timedelta(hours=bet_data.duration_hours)
+    
+    # Store bet in database
+    bet_record = {
+        "bet_id": bet_id,
+        "user_username": current_user.username,
+        "bet_type": bet_data.bet_type,
+        "target": bet_data.target,
+        "unit": bet_data.unit,
+        "stake_amount": bet_data.stake_amount,
+        "potential_win": bet_data.stake_amount * bet_data.multiplier,
+        "multiplier": bet_data.multiplier,
+        "difficulty": bet_data.difficulty,
+        "description": bet_data.description,
+        "duration_hours": bet_data.duration_hours,
+        "created_at": datetime.utcnow().isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "status": "active",
+        "current_progress": 0,
+        "health_submissions": []
+    }
+    
+    # Deduct stake from user's balance
+    await db.users.update_one(
+        {"username": current_user.username},
+        {"$inc": {"sol_balance": -bet_data.stake_amount}}
+    )
+    
+    await db.bets.insert_one(bet_record)
+    
+    return {
+        "success": True,
+        "betId": bet_id,
+        "message": "Bet placed successfully",
+        "expiresAt": expires_at.isoformat()
+    }
+
+@app.get("/bets/user")
+async def get_user_bets(current_user: User = Depends(get_current_user)):
+    """Get all bets for the current user"""
+    bets = await db.bets.find({
+        "user_username": current_user.username
+    }).sort("created_at", -1).to_list(100)
+    
+    # Convert ObjectId to string and format response
+    user_bets = []
+    for bet in bets:
+        bet["_id"] = str(bet["_id"])
+        user_bet = {
+            "betId": bet["bet_id"],
+            "betType": bet["bet_type"],
+            "target": bet["target"],
+            "unit": bet["unit"],
+            "stakeAmount": bet["stake_amount"],
+            "potentialWin": bet["potential_win"],
+            "status": bet["status"],
+            "createdAt": bet["created_at"],
+            "expiresAt": bet["expires_at"],
+            "currentProgress": bet.get("current_progress", 0),
+            "description": bet["description"]
+        }
+        user_bets.append(user_bet)
+    
+    return user_bets
+
+@app.post("/bets/{bet_id}/submit-health")
+async def submit_health_data_for_bet(
+    bet_id: str,
+    health_data: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Submit health data for bet verification"""
+    # Find the bet
+    bet = await db.bets.find_one({
+        "bet_id": bet_id,
+        "user_username": current_user.username,
+        "status": "active"
+    })
+    
+    if not bet:
+        raise HTTPException(status_code=404, detail="Bet not found or not active")
+    
+    # Extract relevant health metric based on bet type
+    progress_value = 0
+    bet_type = bet["bet_type"]
+    
+    if bet_type == "steps":
+        progress_value = health_data.get("steps", 0)
+    elif bet_type == "heart_rate":
+        progress_value = health_data.get("heartRate", 0)
+    elif bet_type == "sleep":
+        progress_value = health_data.get("sleepHours", 0)
+    elif bet_type == "active_energy":
+        progress_value = health_data.get("activeEnergy", 0)
+    elif bet_type == "distance":
+        progress_value = health_data.get("distance", 0)
+    elif bet_type == "workouts":
+        progress_value = health_data.get("workouts", 0)
+    elif bet_type == "flights":
+        progress_value = health_data.get("flights", 0)
+    elif bet_type == "stand_hours":
+        progress_value = health_data.get("standHours", 0)
+    elif bet_type == "hrv":
+        progress_value = health_data.get("hrv", 0)
+    elif bet_type == "vo2_max":
+        progress_value = health_data.get("vo2Max", 0)
+    
+    # Check if bet is completed
+    target_achieved = progress_value >= bet["target"]
+    new_status = "completed" if target_achieved else "active"
+    
+    # Check if bet has expired
+    expires_at = datetime.fromisoformat(bet["expires_at"])
+    if datetime.utcnow() > expires_at and not target_achieved:
+        new_status = "failed"
+    
+    # Update bet with new progress
+    health_submission = {
+        "submitted_at": datetime.utcnow().isoformat(),
+        "health_data": health_data,
+        "progress_value": progress_value
+    }
+    
+    await db.bets.update_one(
+        {"bet_id": bet_id},
+        {
+            "$set": {
+                "current_progress": progress_value,
+                "status": new_status,
+                "last_updated": datetime.utcnow().isoformat()
+            },
+            "$push": {
+                "health_submissions": health_submission
+            }
+        }
+    )
+    
+    return {
+        "success": True,
+        "progress": progress_value,
+        "target": bet["target"],
+        "status": new_status,
+        "targetAchieved": target_achieved
+    }
+
+@app.get("/bets/{bet_id}/status")
+async def get_bet_status(
+    bet_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get status of a specific bet"""
+    bet = await db.bets.find_one({
+        "bet_id": bet_id,
+        "user_username": current_user.username
+    })
+    
+    if not bet:
+        raise HTTPException(status_code=404, detail="Bet not found")
+    
+    return {
+        "betId": bet["bet_id"],
+        "betType": bet["bet_type"],
+        "target": bet["target"],
+        "unit": bet["unit"],
+        "stakeAmount": bet["stake_amount"],
+        "potentialWin": bet["potential_win"],
+        "status": bet["status"],
+        "createdAt": bet["created_at"],
+        "expiresAt": bet["expires_at"],
+        "currentProgress": bet.get("current_progress", 0),
+        "description": bet["description"]
+    }
+
+# Health Metrics Models
+class HealthMetricsSubmission(BaseModel):
+    steps: int
+    activeMinutes: int
+    sleepHours: float
+    heartRate: int
+    caloriesBurned: int
+    date: str = Field(description="YYYY-MM-DD")
+    source: str = "healthkit"
+
+# Health Metrics Endpoints
+@app.post("/health/metrics")
+async def submit_health_metrics(
+    metrics: HealthMetricsSubmission,
+    current_user: User = Depends(get_current_user)
+):
+    """Submit daily health metrics"""
+    try:
+        # Store metrics in database
+        metrics_record = {
+            "user_username": current_user.username,
+            "steps": metrics.steps,
+            "activeMinutes": metrics.activeMinutes,
+            "sleepHours": metrics.sleepHours,
+            "heartRate": metrics.heartRate,
+            "caloriesBurned": metrics.caloriesBurned,
+            "date": metrics.date,
+            "source": metrics.source,
+            "submitted_at": datetime.utcnow().isoformat()
+        }
+        
+        # Upsert to handle duplicate dates
+        await db.health_metrics.update_one(
+            {"user_username": current_user.username, "date": metrics.date},
+            {"$set": metrics_record},
+            upsert=True
+        )
+        
+        return {"success": True, "message": "Health metrics submitted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit metrics: {str(e)}")
+
+@app.get("/health/history")
+async def get_health_history(
+    days: int = 30,
+    current_user: User = Depends(get_current_user)
+):
+    """Get health metrics history"""
+    try:
+        # Calculate date range
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
+        
+        # Query health metrics
+        metrics = await db.health_metrics.find({
+            "user_username": current_user.username,
+            "date": {
+                "$gte": start_date.strftime("%Y-%m-%d"),
+                "$lte": end_date.strftime("%Y-%m-%d")
+            }
+        }).sort("date", -1).to_list(days)
+        
+        # Remove MongoDB _id field
+        for metric in metrics:
+            metric.pop("_id", None)
+            
+        return metrics
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch history: {str(e)}")
+
+@app.post("/health/ai-score")
+async def get_ai_health_score(current_user: User = Depends(get_current_user)):
+    """Get AI-powered health analysis and scoring"""
+    try:
+        # Get user's health history
+        health_history = await db.health_metrics.find({
+            "user_username": current_user.username
+        }).sort("date", -1).limit(30).to_list(30)
+        
+        # Remove MongoDB _id fields
+        for record in health_history:
+            record.pop("_id", None)
+        
+        # Prepare user profile
+        user_profile = {
+            "username": current_user.username,
+            "full_name": current_user.full_name,
+            "age": None,  # Could be added to user model
+            "fitness_level": "intermediate"  # Could be determined from data
+        }
+        
+        # Get AI analysis
+        analysis = await health_ai.analyze_health_data(health_history, user_profile)
+        
+        # Store the analysis
+        analysis_record = {
+            "user_username": current_user.username,
+            "analysis": analysis,
+            "generated_at": datetime.utcnow().isoformat(),
+            "data_points": len(health_history)
+        }
+        
+        await db.health_analyses.insert_one(analysis_record)
+        
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate AI score: {str(e)}")
+
+@app.post("/health/day-complete")
+async def mark_day_complete(current_user: User = Depends(get_current_user)):
+    """Mark day as complete and get comprehensive AI summary"""
+    try:
+        # Get today's date
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        
+        # Check if user has submitted metrics for today
+        today_metrics = await db.health_metrics.find_one({
+            "user_username": current_user.username,
+            "date": today
+        })
+        
+        if not today_metrics:
+            raise HTTPException(status_code=400, detail="Please submit today's health metrics first")
+        
+        # Get comprehensive health history
+        health_history = await db.health_metrics.find({
+            "user_username": current_user.username
+        }).sort("date", -1).limit(30).to_list(30)
+        
+        # Remove MongoDB _id fields
+        for record in health_history:
+            record.pop("_id", None)
+        
+        # Prepare user profile
+        user_profile = {
+            "username": current_user.username,
+            "full_name": current_user.full_name,
+            "day_complete": True
+        }
+        
+        # Get AI analysis with day-end summary
+        analysis = await health_ai.analyze_health_data(health_history, user_profile)
+        
+        # Mark day as complete
+        await db.health_metrics.update_one(
+            {"user_username": current_user.username, "date": today},
+            {"$set": {"day_completed": True, "completed_at": datetime.utcnow().isoformat()}}
+        )
+        
+        # Store the day-end analysis
+        analysis_record = {
+            "user_username": current_user.username,
+            "analysis": analysis,
+            "analysis_type": "day_complete",
+            "date": today,
+            "generated_at": datetime.utcnow().isoformat()
+        }
+        
+        await db.health_analyses.insert_one(analysis_record)
+        
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to complete day analysis: {str(e)}")
+
+@app.get("/health/trends")
+async def get_health_trends(current_user: User = Depends(get_current_user)):
+    """Get health trends analysis"""
+    try:
+        # Get last 14 days of data for trend analysis
+        health_history = await db.health_metrics.find({
+            "user_username": current_user.username
+        }).sort("date", -1).limit(14).to_list(14)
+        
+        if len(health_history) < 7:
+            return []
+        
+        trends = []
+        metrics = ['steps', 'activeMinutes', 'sleepHours', 'heartRate', 'caloriesBurned']
+        
+        for metric in metrics:
+            # Get values for the metric
+            values = [record.get(metric, 0) for record in reversed(health_history) if record.get(metric) is not None]
+            
+            if len(values) >= 7:
+                # Compare first and second week
+                first_week = values[:7]
+                second_week = values[7:14] if len(values) >= 14 else values[7:]
+                
+                first_avg = sum(first_week) / len(first_week)
+                second_avg = sum(second_week) / len(second_week) if second_week else first_avg
+                
+                change_percent = ((second_avg - first_avg) / first_avg * 100) if first_avg > 0 else 0
+                
+                trend = "stable"
+                if abs(change_percent) > 5:
+                    trend = "improving" if change_percent > 0 else "declining"
+                
+                trends.append({
+                    "metric": metric,
+                    "trend": trend,
+                    "changePercent": round(change_percent, 1),
+                    "weeklyAverage": round(second_avg, 1)
+                })
+        
+        return trends
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to calculate trends: {str(e)}")
+
+# Challenge and Friends Models
+class FriendAdd(BaseModel):
+    email: str
+    name: Optional[str] = None
+
+class ChallengeCreateRequest(BaseModel):
+    metrics: List[str]
+    duration: int  # hours
+    stake: float  # SOL
+    friends: List[str]  # email addresses
+    message: Optional[str] = None
+
+class ChallengeInviteRequest(BaseModel):
+    friends: List[dict]
+    message: Optional[str] = None
+
+# Friends Endpoints
+@app.get("/friends/list")
+async def get_friends_list(current_user: User = Depends(get_current_user)):
+    """Get user's friends list"""
+    try:
+        friends = await db.friends.find({
+            "user_username": current_user.username
+        }).to_list(100)
+        
+        # Remove MongoDB _id fields
+        for friend in friends:
+            friend.pop("_id", None)
+        return friends
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch friends: {str(e)}")
+
+@app.post("/friends/add")
+async def add_friend(
+    friend_data: FriendAdd,
+    current_user: User = Depends(get_current_user)
+):
+    """Add a new friend"""
+    try:
+        # Check if friend already exists
+        existing = await db.friends.find_one({
+            "user_username": current_user.username,
+            "email": friend_data.email
+        })
+        
+        if existing:
+            raise HTTPException(status_code=400, detail="Friend already exists")
+        
+        # Create friend record
+        friend_record = {
+            "id": str(uuid.uuid4()),
+            "user_username": current_user.username,
+            "email": friend_data.email,
+            "name": friend_data.name or friend_data.email.split('@')[0],
+            "added_at": datetime.utcnow().isoformat()
+        }
+        
+        await db.friends.insert_one(friend_record)
+        
+        # Remove MongoDB _id field
+        friend_record.pop("_id", None)
+        
+        return friend_record
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add friend: {str(e)}")
+
+# Challenge Endpoints
+@app.post("/challenges/create")
+async def create_challenge(
+    challenge_data: ChallengeCreateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new challenge and send email invitations to friends"""
+    
+    # Validate user balance
+    if current_user.sol_balance < challenge_data.stake:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Insufficient balance. You have {current_user.sol_balance} SOL but need {challenge_data.stake} SOL"
+        )
+    if current_user.sol_balance <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create challenge with zero balance. Please add funds to your account."
+        )
+    
+    try:
+        challenge_id = str(uuid.uuid4())
+        
+        # Create challenge record
+        challenge_record = {
+            "id": challenge_id,
+            "creator_username": current_user.username,
+            "metrics": challenge_data.metrics,
+            "duration": challenge_data.duration,
+            "stake": challenge_data.stake,
+            "friends": challenge_data.friends,
+            "message": challenge_data.message,
+            "status": "active",
+            "created_at": datetime.utcnow().isoformat(),
+            "participants": [current_user.username]
+        }
+        
+        # Deduct stake from user balance
+        await db.users.update_one(
+            {"username": current_user.username},
+            {"$inc": {"sol_balance": -challenge_data.stake}}
+        )
+        
+        await db.challenges.insert_one(challenge_record)
+        
+        # Send email invitations to friends
+        # Send invitations using real user name
+        sender_display_name = current_user.full_name or current_user.username
+        await send_challenge_invitations(
+            challenge_record=challenge_record,
+            friend_emails=challenge_data.friends,
+            sender_name=sender_display_name
+        )
+        
+        # Remove MongoDB _id field
+        challenge_record.pop("_id", None)
+        
+        return challenge_record
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create challenge: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/start")
+async def start_challenge(
+    challenge_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Start a challenge and notify all participants"""
+    try:
+        result = await challenge_agent.handle_challenge_start(challenge_id, current_user.username)
+        
+        if result["success"]:
+            return {
+                "message": "Challenge started successfully",
+                "challenge_id": challenge_id,
+                "notifications_sent": result["notifications_sent"]
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start challenge: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/end-early")
+async def end_challenge_early(
+    challenge_id: str,
+    reason: str = "User requested early termination",
+    current_user: User = Depends(get_current_user)
+):
+    """End a challenge early and refund stakes"""
+    try:
+        result = await challenge_agent.handle_challenge_end_early(
+            challenge_id, current_user.username, reason
+        )
+        
+        if result["success"]:
+            return {
+                "message": "Challenge ended successfully",
+                "challenge_id": challenge_id,
+                "refunded_amount": result["refunded_amount"],
+                "notifications_sent": result["notifications_sent"]
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to end challenge: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/check-progress")
+async def check_challenge_progress(
+    challenge_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Check challenge progress and send notifications if needed"""
+    try:
+        result = await challenge_agent.check_progress_and_notify(challenge_id)
+        
+        if result["success"]:
+            return {
+                "message": "Progress checked successfully",
+                "challenge_id": challenge_id,
+                "notifications_sent": result["notifications_sent"]
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check progress: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/invite")
+async def send_challenge_invites(
+    challenge_id: str,
+    invite_data: ChallengeInviteRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Send challenge invitations via email"""
+    try:
+        # Get challenge details
+        challenge = await db.challenges.find_one({"id": challenge_id})
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+        
+        if challenge["createdBy"] != current_user.username:
+            raise HTTPException(status_code=403, detail="Not authorized to send invites for this challenge")
+        
+        # Prepare challenge data for email
+        email_challenge_data = {
+            "id": challenge_id,
+            "type": challenge["type"],
+            "target": challenge["target"],
+            "duration": challenge["duration"],
+            "stakeAmount": challenge["stakeAmount"],
+            "message": invite_data.message,
+            "unit": "steps" if challenge["type"] == "steps" else 
+                   "minutes" if challenge["type"] == "active_minutes" else 
+                   "calories" if challenge["type"] == "calories" else "points"
+        }
+        
+        # Send emails to each friend
+        sent_count = 0
+        failed_emails = []
+        
+        for friend in invite_data.friends:
+            try:
+                result = await agentmail_client.send_challenge_invitation(
+                    recipient_email=friend["email"],
+                    recipient_name=friend.get("name", friend["email"].split('@')[0]),
+                    challenge_data=email_challenge_data,
+                    sender_name=current_user.full_name or current_user.username
+                )
+                
+                if result["success"]:
+                    sent_count += 1
+                    
+                    # Store invitation record
+                    invitation_record = {
+                        "challenge_id": challenge_id,
+                        "invited_by": current_user.username,
+                        "invited_email": friend["email"],
+                        "invited_name": friend.get("name"),
+                        "sent_at": datetime.utcnow().isoformat(),
+                        "status": "sent",
+                        "message_id": result.get("message_id")
+                    }
+                    await db.challenge_invitations.insert_one(invitation_record)
+                else:
+                    failed_emails.append(friend["email"])
+                    
+            except Exception as email_error:
+                print(f"Failed to send email to {friend['email']}: {str(email_error)}")
+                failed_emails.append(friend["email"])
+        
+        return {
+            "success": True,
+            "sentCount": sent_count,
+            "totalInvited": len(invite_data.friends),
+            "failedEmails": failed_emails
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send invites: {str(e)}")
+
+@app.get("/challenges/user")
+async def get_user_challenges(current_user: User = Depends(get_current_user)):
+    """Get challenges for the current user"""
+    try:
+        # Get challenges where user is creator or participant
+        challenges = await db.challenges.find({
+            "$or": [
+                {"createdBy": current_user.username},
+                {"participants": current_user.username}
+            ]
+        }).sort("createdAt", -1).to_list(50)
+        
+        # Remove MongoDB _id fields and format daily completions
+        for challenge in challenges:
+            challenge.pop("_id", None)
+            
+            # Transform daily_completions structure for frontend
+            if "daily_completions" in challenge:
+                user_completions = challenge["daily_completions"].get(current_user.username, {})
+                challenge["dailyCompletions"] = user_completions
+                challenge.pop("daily_completions", None)
+            else:
+                challenge["dailyCompletions"] = {}
+            
+            # Ensure required fields exist for frontend compatibility
+            if "metrics" not in challenge:
+                challenge["metrics"] = [challenge.get("type", "steps")]
+            if "stake" not in challenge:
+                challenge["stake"] = challenge.get("stakeAmount", 0)
+            
+        return challenges
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch challenges: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/join")
+async def join_challenge(
+    challenge_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Join an existing challenge"""
+    try:
+        # Get challenge
+        challenge = await db.challenges.find_one({"id": challenge_id})
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+        
+        if challenge["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Challenge is no longer accepting participants")
+        
+        if current_user.username in challenge["participants"]:
+            raise HTTPException(status_code=400, detail="Already participating in this challenge")
+        
+        # Add user to participants
+        await db.challenges.update_one(
+            {"id": challenge_id},
+            {
+                "$push": {"participants": current_user.username},
+                "$set": {f"progress.{current_user.username}": 0}
+            }
+        )
+        
+        return {"success": True, "message": "Successfully joined challenge"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to join challenge: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/complete-daily")
+async def mark_daily_completion(
+    challenge_id: str,
+    completion_data: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Mark daily completion for a challenge"""
+    try:
+        # Get challenge
+        challenge = await db.challenges.find_one({"id": challenge_id})
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+        
+        if challenge["status"] != "active":
+            raise HTTPException(status_code=400, detail="Challenge is not active")
+        
+        if current_user.username not in challenge["participants"]:
+            raise HTTPException(status_code=400, detail="Not participating in this challenge")
+        
+        # Get today's date
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        
+        # Update daily completion
+        daily_completions_key = f"daily_completions.{current_user.username}.{today}"
+        
+        await db.challenges.update_one(
+            {"id": challenge_id},
+            {
+                "$set": {daily_completions_key: True}
+            }
+        )
+        
+        return {"success": True, "message": "Daily completion marked successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to mark daily completion: {str(e)}")

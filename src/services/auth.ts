@@ -7,6 +7,7 @@ export interface User {
   full_name?: string;
   avatar_seed: string;
   created_at: string;
+  has_claimed_airdrop?: boolean;
 }
 
 export interface AuthResponse {
@@ -24,6 +25,7 @@ export interface RegisterData {
   password: string;
   email?: string;
   full_name?: string;
+  avatar_seed?: string;
 }
 
 const TOKEN_KEY = 'auth_token';
@@ -74,7 +76,7 @@ export class AuthService {
       const token = await AsyncStorage.getItem(TOKEN_KEY);
       if (!token) return null;
 
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      const response = await fetch(`${API_BASE_URL}/users/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'ngrok-skip-browser-warning': 'true',

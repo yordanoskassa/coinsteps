@@ -6,8 +6,9 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, email?: string, fullName?: string) => Promise<void>;
+  register: (username: string, password: string, email?: string, fullName?: string, avatarSeed?: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,13 +54,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const register = async (username: string, password: string, email?: string, fullName?: string) => {
+  const register = async (username: string, password: string, email?: string, fullName?: string, avatarSeed?: string) => {
     try {
       await AuthService.register({ 
         username, 
         password, 
         email, 
-        full_name: fullName 
+        full_name: fullName,
+        avatar_seed: avatarSeed
       });
       const currentUser = await AuthService.getCurrentUser();
       setUser(currentUser);
@@ -77,6 +79,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const refreshUser = async () => {
+    try {
+      const currentUser = await AuthService.getCurrentUser();
+      setUser(currentUser);
+    } catch (error) {
+      console.error('Failed to refresh user:', error);
+    }
+  };
+
   const value: AuthContextType = {
     user,
     isLoading,
@@ -84,6 +95,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     login,
     register,
     logout,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

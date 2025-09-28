@@ -1,50 +1,73 @@
 {
   "expo": {
-    "name": "Coin Steps",
-    "slug": "coin-steps",
+    "name": "CoinStep",
+    "slug": "coinstep",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
+    "scheme": "coinstep",
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "extra": {
-      "EXPO_PUBLIC_API_URL": "http://localhost:8000"
+      "EXPO_PUBLIC_API_URL": "https://4d26bbfe273c.ngrok-free.app",
+      "eas": {
+        "projectId": "ed36ef9a-01b7-444e-96e8-f5c999ac74c2"
+      }
     },
     "plugins": [
       "expo-build-properties"
     ],
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#4F46E5"
     },
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "1",
+      "icon": "./assets/icon.png",
       "infoPlist": {
-        "NSMotionUsageDescription": "We use Motion & Fitness to read your daily step count for challenges.",
-        "NSHealthShareUsageDescription": "We read steps to verify challenges.",
-        "NSHealthUpdateUsageDescription": "We may write workout summaries you create."
+        "NSMotionUsageDescription": "CoinStep uses Motion & Fitness data to track your daily steps for health challenges with friends.",
+        "NSHealthShareUsageDescription": "CoinStep reads your health data to verify challenge completion and track progress.",
+        "NSHealthUpdateUsageDescription": "CoinStep may record workout summaries for challenges you participate in.",
+        "NSCameraUsageDescription": "CoinStep uses the camera to take profile photos.",
+        "NSPhotoLibraryUsageDescription": "CoinStep accesses your photo library to select profile pictures.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.healthkit": true
       },
-      "bundleIdentifier": "com.jokassa.step-bet"
+      "bundleIdentifier": "com.coinstep.app"
     },
     "android": {
+      "versionCode": 1,
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#4F46E5"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.ACTIVITY_RECOGNITION",
-        "android.permission.ACTIVITY_RECOGNITION"
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE"
       ],
-      "package": "com.jokassa.stepbet"
+      "package": "com.coinstep.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "updates": {
+      "fallbackToCacheTimeout": 0
     }
   }
 }

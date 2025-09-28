@@ -118,7 +118,7 @@ export default function FriendsScreen() {
         <View style={styles.header}>
           <View style={styles.headerContent}>
             <Text style={styles.title}>Friends</Text>
-            <Text style={styles.subtitle}>Connect with other Coin Steps users</Text>
+            <Text style={styles.subtitle}>Connect with other CoinStep users</Text>
           </View>
           {user?.avatar_seed && (
             <Avatar seed={user.avatar_seed} size={56} />

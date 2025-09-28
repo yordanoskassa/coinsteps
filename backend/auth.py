@@ -21,11 +21,14 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 class User(BaseModel):
+    id: Optional[str] = None
     username: str
-    email: Optional[str] = None
+    email: str  # Made mandatory
     full_name: Optional[str] = None
-    avatar_seed: str
     wallet_public_key: Optional[str] = None
+    avatar_seed: Optional[str] = None
+    has_claimed_airdrop: Optional[bool] = False
+    sol_balance: float = 0.0  # Solana balance in SOL
     created_at: str
 
 class UserInDB(User):
@@ -34,8 +37,9 @@ class UserInDB(User):
 class UserCreate(BaseModel):
     username: str
     password: str
-    email: Optional[str] = None
+    email: str  # Made mandatory
     full_name: Optional[str] = None
+    avatar_seed: Optional[str] = None
 
 class UserLogin(BaseModel):
     username: str

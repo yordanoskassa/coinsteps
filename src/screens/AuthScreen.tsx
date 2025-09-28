@@ -9,22 +9,26 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useAuth } from '../contexts/AuthContext';
+import AvatarSelectionScreen from './AvatarSelectionScreen';
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { login, register } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [showAvatarSelection, setShowAvatarSelection] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     password: '',
     email: '',
     fullName: '',
+    avatarSeed: '',
   });
 
   const handleSubmit = async () => {
@@ -33,24 +37,57 @@ export default function AuthScreen() {
       return;
     }
 
+    if (!isLogin && !formData.email) {
+      Alert.alert('Error', 'Email is required for registration');
+      return;
+    }
+
+    if (isLogin) {
+      setIsLoading(true);
+      try {
+        await login(formData.username, formData.password);
+      } catch (error: any) {
+        Alert.alert('Error', error.message || 'Authentication failed');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // For registration, show avatar selection first
+      setShowAvatarSelection(true);
+    }
+  };
+
+  const handleAvatarSelected = async (avatarSeed: string) => {
+    setFormData(prev => ({ ...prev, avatarSeed }));
     setIsLoading(true);
     try {
-      if (isLogin) {
-        await login(formData.username, formData.password);
-      } else {
-        await register(formData.username, formData.password, formData.email, formData.fullName);
-      }
+      await register(formData.username, formData.password, formData.email, formData.fullName, avatarSeed);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Authentication failed');
+      Alert.alert('Error', error.message || 'Registration failed');
+      setShowAvatarSelection(false);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleSkipAvatar = async () => {
+    const defaultSeed = `user-${Date.now()}`;
+    await handleAvatarSelected(defaultSeed);
+  };
+
   const toggleMode = () => {
     setIsLogin(!isLogin);
-    setFormData({ username: '', password: '', email: '', fullName: '' });
+    setFormData({ username: '', password: '', email: '', fullName: '', avatarSeed: '' });
   };
+
+  if (showAvatarSelection) {
+    return (
+      <AvatarSelectionScreen 
+        onAvatarSelected={handleAvatarSelected}
+        onSkip={handleSkipAvatar}
+      />
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -59,8 +96,8 @@ export default function AuthScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={styles.header}>
-          <Ionicons name="fitness" size={56} color={colors.primary} />
-          <Text style={styles.title}>Coin Steps</Text>
+          <Image source={require('../../assets/logo.png')} style={styles.logoImage} resizeMode="contain" />
+          <Text style={styles.title}>CoinStep</Text>
           <Text style={styles.subtitle}>
             {isLogin ? 'Welcome back!' : 'Join the challenge!'}
           </Text>
@@ -115,7 +152,7 @@ export default function AuthScreen() {
                 <Ionicons name="mail-outline" size={20} color={colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Email (optional)"
+                  placeholder="Email *"
                   placeholderTextColor={colors.textMuted}
                   value={formData.email}
                   onChangeText={(text) => setFormData({ ...formData, email: text })}
@@ -177,6 +214,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
+  logoImage: {
+    width: 72,
+    height: 72,
+  },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
@@ -217,10 +258,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primary,
+    backgroundColor: colors.neon,
   },
   submitText: {
-    color: colors.bg,
+    color: '#1A1F3A',
     fontSize: 16,
     fontWeight: '600',
   },
