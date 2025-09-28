@@ -5,6 +5,7 @@ export const colors = {
   primaryGlow: '#A894FF',
   accent: '#00D1FF',
   success: '#22D3A6',
+  error: '#FF5C5C',
   text: '#E8EAF6',
   textMuted: '#A3A7C2',
   card: '#151735',

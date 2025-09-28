@@ -1,10 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TextInput, 
+  TouchableOpacity, 
+  FlatList, 
+  Alert,
+  ActivityIndicator,
+  RefreshControl,
+  Modal
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import GradientBackground from '../components/GradientBackground';
-import { addChallenge, Challenge, getChallenges } from '../store/challenges';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import { api as apiClient } from '../services/apiClient';
+import Avatar from '../components/Avatar';
 
 export default function ChallengesScreen() {
   const insets = useSafeAreaInsets();

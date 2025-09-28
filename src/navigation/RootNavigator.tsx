@@ -2,12 +2,14 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer, DefaultTheme, Theme } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
 import HomeScreen from '../screens/HomeScreen';
-import ChallengesScreen from '../screens/ChallengesScreen';
+import FriendsScreen from '../screens/FriendsScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
 import WalletScreen from '../screens/WalletScreen';
+import AuthScreen from '../screens/AuthScreen';
 import { colors } from '../theme/colors';
-import { Platform, View } from 'react-native';
+import { Platform, View, ActivityIndicator } from 'react-native';
 
 const Tab = createBottomTabNavigator();
 
@@ -24,6 +26,26 @@ const DarkNeonTheme: Theme = {
 };
 
 export default function RootNavigator() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <NavigationContainer theme={DarkNeonTheme}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.bg }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </NavigationContainer>
+    );
+  }
+
+  if (!user) {
+    return (
+      <NavigationContainer theme={DarkNeonTheme}>
+        <AuthScreen />
+      </NavigationContainer>
+    );
+  }
+
   return (
     <NavigationContainer theme={DarkNeonTheme}>
       <Tab.Navigator
@@ -31,35 +53,49 @@ export default function RootNavigator() {
           headerShown: false,
           tabBarShowLabel: false,
           tabBarStyle: {
-            backgroundColor: colors.card,
-            borderTopColor: 'rgba(255,255,255,0.05)',
-            position: 'absolute',
-            marginHorizontal: 16,
-            marginBottom: Platform.select({ ios: 24, android: 16 }),
-            borderRadius: 20,
-            height: 64,
-            paddingBottom: 10,
+            backgroundColor: colors.bg,
+            borderTopWidth: 0,
+            elevation: 0,
+            shadowOpacity: 0,
+            height: Platform.select({ ios: 88, android: 70 }),
+            paddingTop: 12,
+            paddingBottom: Platform.select({ ios: 28, android: 12 }),
           },
-          tabBarIcon: ({ color, focused, size }) => {
+          tabBarIcon: ({ focused }) => {
             let icon: any = 'home';
             if (route.name === 'Home') icon = focused ? 'home' : 'home-outline';
-            if (route.name === 'Challenges') icon = focused ? 'trophy' : 'trophy-outline';
-            if (route.name === 'Leaderboard') icon = focused ? 'bar-chart' : 'bar-chart-outline';
+            if (route.name === 'Friends') icon = focused ? 'people' : 'people-outline';
+            if (route.name === 'Leaderboard') icon = focused ? 'podium' : 'podium-outline';
             if (route.name === 'Wallet') icon = focused ? 'wallet' : 'wallet-outline';
+            
             return (
               <View style={{
-                width: 44, height: 44, borderRadius: 12,
-                alignItems: 'center', justifyContent: 'center',
-                backgroundColor: focused ? 'rgba(124,92,255,0.15)' : 'transparent',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
               }}>
-                <Ionicons name={icon} size={26} color={focused ? colors.primary : colors.textMuted} />
+                <Ionicons 
+                  name={icon} 
+                  size={24} 
+                  color={focused ? colors.primary : colors.textMuted} 
+                />
+                {focused && (
+                  <View style={{
+                    width: 4,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: colors.primary,
+                    marginTop: 4,
+                  }} />
+                )}
               </View>
             );
           },
         })}
       >
         <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Challenges" component={ChallengesScreen} />
+        <Tab.Screen name="Friends" component={FriendsScreen} />
         <Tab.Screen name="Leaderboard" component={LeaderboardScreen} />
         <Tab.Screen name="Wallet" component={WalletScreen} />
       </Tab.Navigator>
