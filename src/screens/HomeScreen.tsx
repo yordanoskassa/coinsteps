@@ -10,7 +10,6 @@ import MiniAreaChart from '../components/MiniAreaChart';
 import Avatar from '../components/Avatar';
 import BettingGameModal from '../components/BettingGameModal';
 import CreateChallengeModal from '../components/CreateChallengeModal';
-import CameraModal from '../components/CameraModal';
 import { ChallengeService, Challenge, Friend } from '../services/challengeService';
 import { logSteps } from '../services/steps';
 import { BettingService, WalletInfo, BettingStats } from '../services/betting';
@@ -23,7 +22,6 @@ export default function HomeScreen() {
   const { user, logout } = useAuth();
   const [showBettingModal, setShowBettingModal] = useState(false);
   const [showCreateChallenge, setShowCreateChallenge] = useState(false);
-  const [showCamera, setShowCamera] = useState(false);
   const [quickChallengePrefill, setQuickChallengePrefill] = useState<{ metrics: string[]; stake: number; duration: number } | null>(null);
   const [openChallenges, setOpenChallenges] = useState<Challenge[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -446,16 +444,6 @@ export default function HomeScreen() {
                   progress={standHours / 12}
                   color="#45B7D1"
                 />
-                <TouchableOpacity onPress={() => setShowCamera(true)}>
-                  <StatCard 
-                    icon="camera" 
-                    label="Camera" 
-                    value="📸" 
-                    target="Tap" 
-                    progress={1}
-                    color="#9C27B0"
-                  />
-                </TouchableOpacity>
               </View>
             </View>
 
@@ -581,15 +569,6 @@ export default function HomeScreen() {
         initialMetrics={quickChallengePrefill?.metrics}
         initialStake={quickChallengePrefill?.stake}
         initialDuration={quickChallengePrefill?.duration}
-      />
-
-      <CameraModal
-        visible={showCamera}
-        onClose={() => setShowCamera(false)}
-        onPhotoTaken={(uri) => {
-          console.log('Photo taken:', uri);
-          // You can handle the photo here - save to gallery, upload, etc.
-        }}
       />
     </View>
   );
