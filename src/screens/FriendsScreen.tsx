@@ -100,6 +100,29 @@ export default function FriendsScreen() {
     }
   };
 
+  const removeFriend = async (username: string) => {
+    Alert.alert(
+      'Remove Friend',
+      `Are you sure you want to remove ${username} from your friends?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.delete(`/friends/${username}`);
+              Alert.alert('Success', 'Friend removed successfully');
+              loadFriends();
+            } catch (error: any) {
+              Alert.alert('Error', error.response?.data?.detail || 'Failed to remove friend');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 16, backgroundColor: colors.bg }]}>
@@ -198,8 +221,19 @@ export default function FriendsScreen() {
 
         {/* Friends List */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>My Friends</Text>
-          <Text style={styles.sectionSubtitle}>{friends.length} friends</Text>
+          <TouchableOpacity 
+            style={styles.sectionHeader}
+            onPress={() => {
+              loadFriends();
+              loadFriendRequests();
+            }}
+          >
+            <View>
+              <Text style={styles.sectionTitle}>My Friends</Text>
+              <Text style={styles.sectionSubtitle}>{friends.length} friends</Text>
+            </View>
+            <Ionicons name="refresh" size={20} color={colors.primary} />
+          </TouchableOpacity>
           
           {friends.length === 0 ? (
             <View style={styles.emptyState}>
@@ -217,8 +251,12 @@ export default function FriendsScreen() {
                   <Text style={styles.username}>{friend.username}</Text>
                   {friend.full_name && <Text style={styles.fullName}>{friend.full_name}</Text>}
                 </View>
-                <TouchableOpacity style={styles.challengeButton}>
-                  <Text style={styles.challengeText}>Challenge</Text>
+                <TouchableOpacity 
+                  style={styles.removeButton}
+                  onPress={() => removeFriend(friend.username)}
+                >
+                  <Ionicons name="person-remove" size={16} color="#FF5722" />
+                  <Text style={styles.removeText}>Remove</Text>
                 </TouchableOpacity>
               </View>
             ))
@@ -428,5 +466,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  removeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 87, 34, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 87, 34, 0.3)',
+  },
+  removeText: {
+    color: '#FF5722',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
 });

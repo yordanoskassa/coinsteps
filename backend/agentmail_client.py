@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from agentmail import AgentMail
 import httpx
 from dotenv import load_dotenv
@@ -19,6 +19,11 @@ class AgentMailClient:
         
     async def send_challenge_invitation(self, recipient_email: str, recipient_name: str, challenge_data: Dict[str, Any], sender_name: str) -> Dict[str, Any]:
         """Send a challenge invitation email via AgentMail with AI-generated content"""
+        
+        # Fetch SOL→USD price for display
+        sol_usd = await self._fetch_sol_usd_price()
+        if sol_usd:
+            challenge_data = {**challenge_data, "sol_usd_price": sol_usd}
         
         # Generate personalized email content using ASI One
         ai_content = await self._generate_ai_email_content(
@@ -60,8 +65,10 @@ class AgentMailClient:
         try:
             session_id = str(uuid.uuid4())
             
-            stake_amount = challenge_data.get('stakeAmount', challenge_data.get('stake', 0.1))
-        
+            stake = challenge_data.get("stakeAmount", challenge_data.get("stake", 0.1))
+            sol_usd = challenge_data.get('sol_usd_price')
+            stake_usd_text = f" (≈ ${float(stake) * sol_usd:.2f})" if sol_usd else ""
+            message = challenge_data.get("message", "")
             prompt = f"""
             Generate a personalized, engaging challenge invitation email for CoinStep, a health and fitness app.
             
@@ -71,7 +78,7 @@ class AgentMailClient:
             - Challenge Type: {challenge_data.get('type', 'health')}
             - Target: {challenge_data.get('target', 'N/A')}
             - Duration: {challenge_data.get('duration', 24)} hours
-            - Stake: {stake_amount} SOL
+            - Stake: {stake} SOL{stake_usd_text}
             - Personal Message: {challenge_data.get('message', 'Let\'s do this together!')}
             
             Generate a JSON response with:
@@ -139,6 +146,21 @@ class AgentMailClient:
         except Exception as e:
             print(f"Error generating AI email content: {str(e)}")
             return self._get_fallback_email_content(recipient_name, sender_name, challenge_data)
+
+    async def _fetch_sol_usd_price(self) -> Optional[float]:
+        """Fetch current SOL→USD price from CoinGecko"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("solana", {}).get("usd")
+        except Exception as e:
+            print(f"Failed to fetch SOL price: {e}")
+        return None
 
     async def send_challenge_reminder(self, recipient_email: str, recipient_name: str, challenge_data: Dict[str, Any]) -> Dict[str, Any]:
         """Send a challenge reminder email"""
@@ -350,7 +372,7 @@ Challenge Details:
 - Type: {challenge_type}
 - Target: {target} {challenge_data.get('unit', 'steps')}
 - Duration: {duration} hours
-- Stake: {stake} SOL
+- Stake: {stake} SOL{stake_usd_text}
 
 {f'Personal Message: "{message}"' if message else ''}
 

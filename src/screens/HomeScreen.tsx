@@ -10,9 +10,11 @@ import MiniAreaChart from '../components/MiniAreaChart';
 import Avatar from '../components/Avatar';
 import BettingGameModal from '../components/BettingGameModal';
 import CreateChallengeModal from '../components/CreateChallengeModal';
+import CameraModal from '../components/CameraModal';
 import { ChallengeService, Challenge, Friend } from '../services/challengeService';
 import { logSteps } from '../services/steps';
 import { BettingService, WalletInfo, BettingStats } from '../services/betting';
+import { solPriceService } from '../services/solPriceService';
 
 const GOAL = 10000;
 
@@ -21,6 +23,7 @@ export default function HomeScreen() {
   const { user, logout } = useAuth();
   const [showBettingModal, setShowBettingModal] = useState(false);
   const [showCreateChallenge, setShowCreateChallenge] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const [quickChallengePrefill, setQuickChallengePrefill] = useState<{ metrics: string[]; stake: number; duration: number } | null>(null);
   const [openChallenges, setOpenChallenges] = useState<Challenge[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -30,6 +33,7 @@ export default function HomeScreen() {
   const [isLoadingWallet, setIsLoadingWallet] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [userBalance, setUserBalance] = useState<number>(0);
+  const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const { 
     steps, 
     distance, 
@@ -53,6 +57,14 @@ export default function HomeScreen() {
     
     const loadAllData = async () => {
       try {
+        // Load SOL price
+        if (isMounted) {
+          const price = await solPriceService.getCurrentPrice();
+          if (isMounted) {
+            setSolUsdPrice(price);
+          }
+        }
+
         // Load wallet data
         if (isMounted) {
           setIsLoadingWallet(true);
@@ -113,18 +125,20 @@ export default function HomeScreen() {
     
     try {
       setIsRefreshing(true);
-      const [walletData, statsData, friendList, challenges, balance] = await Promise.all([
+      const [walletData, statsData, friendList, challenges, balance, price] = await Promise.all([
         BettingService.getWalletInfo().catch(() => ({ public_key: '', balance: 0 })),
         BettingService.getBettingStats().catch(() => ({ activeBets: 0, atRisk: 0, winStreak: 0, totalWinnings: 0 })),
         ChallengeService.getFriendsList().catch(() => []),
         ChallengeService.getUserChallenges().catch(() => []),
         ChallengeService.getUserBalance().catch(() => 0),
+        solPriceService.getCurrentPrice(),
       ]);
       
       setWalletInfo(walletData);
       setBettingStats(statsData);
       setFriends(friendList);
       setUserBalance(balance);
+      setSolUsdPrice(price);
       setOpenChallenges((challenges as Challenge[]).filter(c => c.status === 'pending' || c.status === 'active'));
     } catch (error) {
       console.error('Failed to refresh data:', error);
@@ -136,7 +150,7 @@ export default function HomeScreen() {
   // Generate dynamic challenge options based on current health data
   const generateChallengeOptions = () => {
     const baseStakeSOL = 0.01; // Base stake in SOL
-    const solToUSD = 20; // Mock SOL to USD rate
+    const solToUSD = solUsdPrice || 150; // Use real SOL price or fallback
     
     return [
       {
@@ -261,7 +275,9 @@ export default function HomeScreen() {
             <View style={styles.userInfo}>
               <Text style={styles.welcomeText}>Welcome,</Text>
               <Text style={styles.usernameText}>{user?.full_name || user?.username || 'User'}</Text>
-              <Text style={styles.balanceText}>{userBalance.toFixed(2)} SOL</Text>
+              <Text style={styles.balanceText}>
+                {userBalance.toFixed(2)} SOL{solUsdPrice ? ` (≈ $${(userBalance * solUsdPrice).toFixed(2)})` : ''}
+              </Text>
             </View>
           </View>
           <View style={styles.stepIndicator}>
@@ -290,7 +306,7 @@ export default function HomeScreen() {
                   <View style={styles.balanceInfo}>
                     <Text style={styles.balanceLabel}>Coin Balance</Text>
                     <Text style={styles.balanceValue}>
-                      {isLoadingWallet ? '...' : `$${((walletInfo?.balance || 0) * 20).toFixed(2)}`}
+                      {isLoadingWallet ? '...' : solUsdPrice ? `$${((walletInfo?.balance || 0) * solUsdPrice).toFixed(2)}` : `${(walletInfo?.balance || 0).toFixed(2)} SOL`}
                     </Text>
                   </View>
                   <TouchableOpacity style={styles.addFundsButton} onPress={handleRefresh}>
@@ -307,7 +323,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.bettingStat}>
                     <Text style={styles.betStatValue}>
-                      {isLoadingWallet ? '...' : `$${((bettingStats?.atRisk || 0) * 20).toFixed(0)}`}
+                      {isLoadingWallet ? '...' : solUsdPrice ? `$${((bettingStats?.atRisk || 0) * solUsdPrice).toFixed(0)}` : `${(bettingStats?.atRisk || 0).toFixed(2)} SOL`}
                     </Text>
                     <Text style={styles.betStatLabel}>At Risk</Text>
                   </View>
@@ -430,6 +446,16 @@ export default function HomeScreen() {
                   progress={standHours / 12}
                   color="#45B7D1"
                 />
+                <TouchableOpacity onPress={() => setShowCamera(true)}>
+                  <StatCard 
+                    icon="camera" 
+                    label="Camera" 
+                    value="📸" 
+                    target="Tap" 
+                    progress={1}
+                    color="#9C27B0"
+                  />
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -555,6 +581,15 @@ export default function HomeScreen() {
         initialMetrics={quickChallengePrefill?.metrics}
         initialStake={quickChallengePrefill?.stake}
         initialDuration={quickChallengePrefill?.duration}
+      />
+
+      <CameraModal
+        visible={showCamera}
+        onClose={() => setShowCamera(false)}
+        onPhotoTaken={(uri) => {
+          console.log('Photo taken:', uri);
+          // You can handle the photo here - save to gallery, upload, etc.
+        }}
       />
     </View>
   );

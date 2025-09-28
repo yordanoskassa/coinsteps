@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -35,10 +36,35 @@ export default function ActiveChallenges({ onRefresh }: ActiveChallengesProps) {
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [loading, setLoading] = useState(true);
   const [completingDaily, setCompletingDaily] = useState<string | null>(null);
+  const [solUsd, setSolUsd] = useState<number | null>(null);
+  const [detailsVisible, setDetailsVisible] = useState(false);
+  const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
   useEffect(() => {
     loadChallenges();
+    fetchSolUsd();
   }, []);
+
+  const fetchSolUsd = async () => {
+    try {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+      const json = await res.json();
+      const price = json?.solana?.usd;
+      if (typeof price === 'number') setSolUsd(price);
+    } catch (e) {
+      // ignore pricing fetch errors
+    }
+  };
+
+  const openDetails = (challenge: Challenge) => {
+    setSelectedChallenge(challenge);
+    setDetailsVisible(true);
+  };
+
+  const closeDetails = () => {
+    setDetailsVisible(false);
+    setSelectedChallenge(null);
+  };
 
   const loadChallenges = async () => {
     try {
@@ -80,6 +106,22 @@ export default function ActiveChallenges({ onRefresh }: ActiveChallengesProps) {
       Alert.alert('Error', 'Failed to mark completion. Please try again.');
     } finally {
       setCompletingDaily(null);
+    }
+  };
+
+  const acceptChallenge = async (challengeId: string) => {
+    try {
+      const result = await ChallengeService.acceptChallenge(challengeId);
+      if (result.status === 'active') {
+        Alert.alert('Success', 'Challenge accepted and activated! Stakes have been deducted. 🚀');
+      } else {
+        Alert.alert('Success', 'Challenge accepted! Waiting for more participants to activate. ⏳');
+      }
+      loadChallenges(); // Refresh the list
+      onRefresh?.();
+    } catch (error) {
+      console.error('Failed to accept challenge:', error);
+      Alert.alert('Error', 'Failed to accept challenge. Please try again.');
     }
   };
 
@@ -194,7 +236,12 @@ export default function ActiveChallenges({ onRefresh }: ActiveChallengesProps) {
       <Text style={styles.sectionTitle}>Active Challenges</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.challengesList}>
         {challenges.map((challenge) => (
-          <View key={challenge.id} style={styles.challengeCard}>
+          <TouchableOpacity
+            key={challenge.id}
+            style={styles.challengeCard}
+            activeOpacity={0.9}
+            onPress={() => openDetails(challenge)}
+          >
             <View style={styles.challengeHeader}>
               <View style={styles.metricsRow}>
                 {challenge.metrics.slice(0, 3).map((metric, index) => (
@@ -220,18 +267,29 @@ export default function ActiveChallenges({ onRefresh }: ActiveChallengesProps) {
               <Text style={styles.participantCount}>
                 {challenge.participants.length} participants
               </Text>
-              <Text style={styles.stakeAmount}>{challenge.stake} SOL</Text>
+              <Text style={styles.stakeAmount}>
+                {challenge.stake} SOL{solUsd ? ` (≈ $${(challenge.stake * solUsd).toFixed(2)})` : ''}
+              </Text>
             </View>
 
             <View style={styles.challengeActions}>
               {challenge.status === 'pending' ? (
-                <TouchableOpacity
-                  style={styles.startButton}
-                  onPress={() => startChallenge(challenge.id)}
-                >
-                  <Ionicons name="play-circle" size={16} color="#fff" />
-                  <Text style={styles.startButtonText}>Start Challenge</Text>
-                </TouchableOpacity>
+                <View style={styles.pendingActions}>
+                  <TouchableOpacity
+                    style={styles.acceptButton}
+                    onPress={() => acceptChallenge(challenge.id)}
+                  >
+                    <Ionicons name="checkmark-circle" size={16} color="#fff" />
+                    <Text style={styles.acceptButtonText}>Accept</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.startButton}
+                    onPress={() => startChallenge(challenge.id)}
+                  >
+                    <Ionicons name="play-circle" size={16} color="#fff" />
+                    <Text style={styles.startButtonText}>Start Challenge</Text>
+                  </TouchableOpacity>
+                </View>
               ) : challenge.status === 'active' && !isCompletedToday(challenge) ? (
                 <View style={styles.activeActions}>
                   <TouchableOpacity
@@ -280,9 +338,71 @@ export default function ActiveChallenges({ onRefresh }: ActiveChallengesProps) {
                 </View>
               )}
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
+
+      {/* Details Modal */}
+      <Modal visible={detailsVisible} transparent animationType="fade" onRequestClose={closeDetails}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Challenge Details</Text>
+              <TouchableOpacity onPress={closeDetails}>
+                <Ionicons name="close" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedChallenge && (
+              <View style={styles.modalContent}>
+                <View style={styles.modalRow}>
+                  <Text style={styles.modalLabel}>Status</Text>
+                  <Text style={styles.modalValue}>{selectedChallenge.status}</Text>
+                </View>
+                <View style={styles.modalRow}>
+                  <Text style={styles.modalLabel}>Stake</Text>
+                  <Text style={styles.modalValue}>
+                    {selectedChallenge.stake} SOL{solUsd ? ` (≈ $${(selectedChallenge.stake * solUsd).toFixed(2)})` : ''}
+                  </Text>
+                </View>
+                <View style={styles.modalRow}>
+                  <Text style={styles.modalLabel}>Metrics</Text>
+                  <Text style={styles.modalValue}>{selectedChallenge.metrics.join(', ')}</Text>
+                </View>
+                <View style={styles.modalRow}>
+                  <Text style={styles.modalLabel}>Duration</Text>
+                  <Text style={styles.modalValue}>{selectedChallenge.duration}h</Text>
+                </View>
+                <View style={[styles.modalRow, { alignItems: 'flex-start' }]}>
+                  <Text style={styles.modalLabel}>Opponents</Text>
+                  <View style={{ flex: 1 }}>
+                    {selectedChallenge.participants.length <= 1 ? (
+                      <Text style={styles.modalValue}>Waiting for others to accept…</Text>
+                    ) : (
+                      <Text style={styles.modalValue}>
+                        {selectedChallenge.participants.slice(1).join(', ')}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {selectedChallenge.status === 'pending' && (
+                  <TouchableOpacity
+                    style={[styles.startButton, { marginTop: 12 }]}
+                    onPress={() => {
+                      acceptChallenge(selectedChallenge.id);
+                      closeDetails();
+                    }}
+                  >
+                    <Ionicons name="checkmark-circle" size={16} color="#fff" />
+                    <Text style={styles.startButtonText}>Accept Challenge</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -467,5 +587,71 @@ const styles = StyleSheet.create({
   completedActions: {
     alignItems: 'center',
     gap: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalContent: {
+    gap: 8,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  modalLabel: {
+    color: colors.textMuted,
+    fontSize: 14,
+    width: 100,
+  },
+  modalValue: {
+    color: colors.text,
+    fontSize: 14,
+    flex: 1,
+  },
+  pendingActions: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  acceptButton: {
+    backgroundColor: colors.success,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  acceptButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
 });

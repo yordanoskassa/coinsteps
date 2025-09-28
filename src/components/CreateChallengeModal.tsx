@@ -64,6 +64,7 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
   const [newFriendEmail, setNewFriendEmail] = useState('');
   const [newFriendName, setNewFriendName] = useState('');
   const [userBalance, setUserBalance] = useState<number | null>(null);
+  const [solUsd, setSolUsd] = useState<number | null>(null);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
@@ -77,6 +78,7 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
       if (typeof initialDuration === 'number') setDuration(initialDuration);
       loadFriends();
       loadUserBalance();
+      fetchSolUsd();
     }
   }, [visible, initialMetrics, initialStake, initialDuration]);
 
@@ -87,6 +89,17 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
     } catch (error) {
       console.error('Failed to load user balance:', error);
       setUserBalance(0);
+    }
+  };
+
+  const fetchSolUsd = async () => {
+    try {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+      const json = await res.json();
+      const price = json?.solana?.usd;
+      if (typeof price === 'number') setSolUsd(price);
+    } catch (e) {
+      // ignore pricing errors silently
     }
   };
 
@@ -125,14 +138,10 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
   };
 
   const createChallenge = async () => {
-    // Allow creating a solo challenge (no friends). We'll show a gentle warning instead of blocking.
+    // Require at least one friend to create a challenge
     if (!selectedFriends.length) {
-      Alert.alert(
-        'No Friends Selected',
-        'You did not select any friends. You can still create a solo challenge and invite friends later.',
-        [{ text: 'Continue', style: 'default' }, { text: 'Cancel', style: 'cancel', onPress: () => {} }]
-      );
-      // We continue; no early return needed
+      Alert.alert('Select Friends', 'Please select at least one friend to start a challenge.');
+      return;
     }
 
     if (!selectedMetrics.length) {
@@ -307,6 +316,7 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
               <Text style={styles.inputLabel}>Stake Amount (SOL)</Text>
               <Text style={styles.balanceText}>
                 Balance: {userBalance !== null ? `${userBalance.toFixed(2)} SOL` : 'Loading...'}
+                {userBalance !== null && solUsd !== null ? `  (≈ $${(userBalance * solUsd).toFixed(2)})` : ''}
               </Text>
             </View>
             <TextInput
@@ -399,9 +409,9 @@ export default function CreateChallengeModal({ visible, onClose, onChallengeCrea
 
         <View style={styles.footer}>
           <TouchableOpacity
-            style={[styles.createButton, (!selectedMetrics.length || isLoading) && styles.disabledButton]}
+            style={[styles.createButton, (!selectedMetrics.length || !selectedFriends.length || isLoading) && styles.disabledButton]}
             onPress={createChallenge}
-            disabled={!selectedMetrics.length || isLoading}
+            disabled={!selectedMetrics.length || !selectedFriends.length || isLoading}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />

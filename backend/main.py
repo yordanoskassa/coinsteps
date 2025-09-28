@@ -218,7 +218,7 @@ async def register(user: UserCreate):
         "full_name": user.full_name,
         "avatar_seed": avatar_seed,
         "hashed_password": hashed_password,
-        "sol_balance": 10.0,  # Give new users 10 SOL to start
+        "sol_balance": 0.0,  # Start with 0 SOL balance
         "created_at": datetime.utcnow().isoformat()
     }
     
@@ -462,7 +462,7 @@ async def get_wallet_info(current_user: User = Depends(get_current_user)):
                 "$set": {
                     "wallet_public_key": wallet_data["public_key"],
                     "encrypted_private_key": wallet_data["encrypted_private_key"],
-                    "sol_balance": 1.0  # Give new users 1 SOL to start
+                    "sol_balance": 0.0  # Start with 0 SOL balance
                 }
             }
         )
@@ -471,15 +471,20 @@ async def get_wallet_info(current_user: User = Depends(get_current_user)):
         current_user.wallet_public_key = wallet_data["public_key"]
         current_user.sol_balance = 1.0
     
-    # Get on-chain balance
-    balance = await wallet_service.get_balance(current_user.wallet_public_key)
-    
-    # Use SOL balance from database (includes both on-chain and simulated balance)
+    # Get user's database balance (includes simulated airdrops)
     user_data = await db.users.find_one({"username": current_user.username})
-    sol_balance = user_data.get("sol_balance", 0.0) if user_data else 0.0
+    database_balance = user_data.get("sol_balance", 0.0) if user_data else 0.0
     
-    # For now, prioritize database balance over on-chain balance for demo purposes
-    total_balance = sol_balance if sol_balance > 0 else balance
+    # Try to get on-chain balance, but don't fail if network is down
+    on_chain_balance = 0.0
+    try:
+        on_chain_balance = await wallet_service.get_balance(current_user.wallet_public_key)
+    except Exception as e:
+        print(f"Could not fetch on-chain balance for {current_user.username}: {e}")
+    
+    # Use the higher of database balance or on-chain balance
+    # This ensures simulated balances work when testnet is down
+    total_balance = max(database_balance, on_chain_balance)
     
     return WalletInfo(
         public_key=current_user.wallet_public_key,
@@ -523,13 +528,19 @@ async def claim_initial_airdrop(current_user: User = Depends(get_current_user)):
     if user_doc and user_doc.get("has_claimed_airdrop", False):
         raise HTTPException(status_code=400, detail="Initial airdrop already claimed")
     
-    # Airdrop 0.5 SOL for first-time claim
-    result = await wallet_service.airdrop_sol(current_user.wallet_public_key, 0.5)
-    
-    if result["status"] == "error":
-        error_msg = result["error"]
-        print(f"Initial airdrop error for user {current_user.username}: {error_msg}")
-        raise HTTPException(status_code=400, detail=f"Failed to claim initial airdrop: {error_msg}")
+    # Try actual SOL airdrop first, but fall back to database balance
+    try:
+        result = await wallet_service.airdrop_sol(current_user.wallet_public_key, 1.0)
+        
+        if result["status"] == "error":
+            print(f"Real airdrop failed for {current_user.username}: {result['error']}")
+            # Fall back to database balance system
+            result = await simulate_airdrop(current_user.username, 1.0)
+        
+    except Exception as e:
+        print(f"Airdrop exception for {current_user.username}: {str(e)}")
+        # Fall back to database balance system
+        result = await simulate_airdrop(current_user.username, 1.0)
     
     # Mark user as having claimed their initial airdrop
     await db.users.update_one(
@@ -538,6 +549,36 @@ async def claim_initial_airdrop(current_user: User = Depends(get_current_user)):
     )
     
     return result
+
+async def simulate_airdrop(username: str, amount: float) -> dict:
+    """Simulate an airdrop by adding to user's database balance when real airdrops fail"""
+    try:
+        # Add to user's SOL balance in database
+        await db.users.update_one(
+            {"username": username},
+            {"$inc": {"sol_balance": amount}}
+        )
+        
+        # Generate a simulated transaction signature
+        import time
+        import hashlib
+        signature_data = f"{username}_{amount}_{time.time()}"
+        signature = hashlib.sha256(signature_data.encode()).hexdigest()
+        
+        print(f"Simulated airdrop: {amount} SOL added to {username}'s balance")
+        
+        return {
+            "transaction_signature": f"sim_{signature}",
+            "status": "success",
+            "amount": amount,
+            "note": "Simulated airdrop - balance added to account"
+        }
+    except Exception as e:
+        return {
+            "transaction_signature": None,
+            "status": "error", 
+            "error": f"Failed to simulate airdrop: {str(e)}"
+        }
 
 @app.post("/wallet/manual-airdrop")
 async def manual_airdrop(current_user: User = Depends(get_current_user)):
@@ -551,17 +592,52 @@ async def manual_airdrop(current_user: User = Depends(get_current_user)):
         # Update user's balance in database (simulated airdrop)
         await db.users.update_one(
             {"username": current_user.username},
-            {"$inc": {"simulated_balance": 1.0}}
+            {"$inc": {"sol_balance": 1.0}}
         )
         
+        import time
         return {
-            "transaction_signature": "simulated_airdrop_" + str(int(time.time())),
+            "transaction_signature": "manual_airdrop_" + str(int(time.time())),
             "status": "success",
             "amount": 1.0,
-            "note": "Simulated airdrop for testing"
+            "note": "Manual airdrop for testing - added to database balance"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Manual airdrop failed: {str(e)}")
+
+@app.post("/wallet/add-test-funds")
+async def add_test_funds(amount: float = 5.0, current_user: User = Depends(get_current_user)):
+    """Add test funds to user's account - useful for development/testing"""
+    if not current_user.wallet_public_key:
+        raise HTTPException(status_code=404, detail="User does not have a wallet")
+    
+    # Limit the amount to prevent abuse
+    if amount > 10.0:
+        amount = 10.0
+    elif amount < 0.1:
+        amount = 0.1
+    
+    try:
+        await db.users.update_one(
+            {"username": current_user.username},
+            {"$inc": {"sol_balance": amount}}
+        )
+        
+        import time
+        import hashlib
+        signature_data = f"test_funds_{current_user.username}_{amount}_{time.time()}"
+        signature = hashlib.sha256(signature_data.encode()).hexdigest()[:16]
+        
+        print(f"Added {amount} SOL test funds to {current_user.username}")
+        
+        return {
+            "transaction_signature": f"test_{signature}",
+            "status": "success",
+            "amount": amount,
+            "note": f"Test funds added to account for development purposes"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add test funds: {str(e)}")
 
 @app.post("/wallet/transfer", response_model=TransferResponse)
 async def transfer_sol(transfer_request: TransferRequest, current_user: User = Depends(get_current_user)):
@@ -665,8 +741,11 @@ health_ai = HealthAIAnalyzer()
 challenge_agent = ChallengeAgent(client)
 
 # Helper function to send challenge invitations
-async def send_challenge_invitations(challenge_record: dict, friend_emails: List[str], sender_name: str):
-    """Send email invitations to friends for a challenge"""
+async def send_challenge_invitations(challenge_record: dict, friend_emails_or_usernames: List[str], sender_name: str):
+    """Send email invitations to friends for a challenge.
+    Accepts a list of emails or usernames; usernames will be resolved to user emails.
+    Skips invalid entries and logs results.
+    """
     try:
         # Prepare challenge data for email template
         email_challenge_data = {
@@ -677,26 +756,48 @@ async def send_challenge_invitations(challenge_record: dict, friend_emails: List
             "stakeAmount": str(challenge_record["stake"]),
             "message": challenge_record.get("message", "")
         }
-        
-        # Send invitation to each friend
-        for friend_email in friend_emails:
+
+        async def resolve_email(identifier: str) -> Optional[str]:
+            # If looks like an email, return as-is
+            if identifier and "@" in identifier:
+                return identifier
+            # Otherwise treat as username and try to resolve
             try:
-                # Extract name from email if no name provided
-                friend_name = friend_email.split('@')[0].title()
-                
+                user = await db.users.find_one({"username": identifier})
+                if user and user.get("email"):
+                    return user["email"]
+            except Exception as e:
+                print(f"Email resolve error for '{identifier}': {e}")
+            return None
+
+        # Resolve all identifiers to emails
+        resolved_emails: List[str] = []
+        for ident in friend_emails_or_usernames or []:
+            email = await resolve_email(ident)
+            if email:
+                resolved_emails.append(email)
+            else:
+                print(f"Skipping invite, invalid identifier: '{ident}'")
+
+        if not resolved_emails:
+            print("No valid emails resolved for invitations; skipping send.")
+            return
+
+        # Send invitation to each friend
+        for email in resolved_emails:
+            try:
+                friend_name = email.split('@')[0].title()
                 result = await agentmail_client.send_challenge_invitation(
-                    recipient_email=friend_email,
+                    recipient_email=email,
                     recipient_name=friend_name,
                     challenge_data=email_challenge_data,
                     sender_name=sender_name
                 )
-                
-                print(f"Sent invitation to {friend_email}: {result}")
-                
+                print(f"Sent invitation to {email}: {result}")
             except Exception as e:
-                print(f"Failed to send invitation to {friend_email}: {str(e)}")
+                print(f"Failed to send invitation to {email}: {str(e)}")
                 # Continue sending to other friends even if one fails
-                
+
     except Exception as e:
         print(f"Error in send_challenge_invitations: {str(e)}")
         # Don't raise exception to avoid breaking challenge creation
@@ -1350,60 +1451,106 @@ async def create_challenge(
     challenge_data: ChallengeCreateRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new challenge and send email invitations to friends"""
-    
-    # Validate user balance
+    """Create a new challenge in pending state and send invitations.
+    No SOL is deducted until at least two users accept (two-way acceptance).
+    """
+
+    # Creator must have enough balance available for the stake (but we don't deduct yet)
     if current_user.sol_balance < challenge_data.stake:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Insufficient balance. You have {current_user.sol_balance} SOL but need {challenge_data.stake} SOL"
         )
-    if current_user.sol_balance <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot create challenge with zero balance. Please add funds to your account."
-        )
-    
+
     try:
         challenge_id = str(uuid.uuid4())
-        
-        # Create challenge record
+
+        # Create challenge record in pending state
         challenge_record = {
             "id": challenge_id,
             "creator_username": current_user.username,
             "metrics": challenge_data.metrics,
             "duration": challenge_data.duration,
             "stake": challenge_data.stake,
-            "friends": challenge_data.friends,
+            "invited": list(set(challenge_data.friends or [])),  # emails or usernames
             "message": challenge_data.message,
-            "status": "active",
+            "status": "pending",
             "created_at": datetime.utcnow().isoformat(),
-            "participants": [current_user.username]
+            "participants": [current_user.username],  # creator is a participant
+            "accepted": {current_user.username: True},  # creator auto-accepts
+            "activated_at": None,
         }
-        
-        # Deduct stake from user balance
-        await db.users.update_one(
-            {"username": current_user.username},
-            {"$inc": {"sol_balance": -challenge_data.stake}}
-        )
-        
+
         await db.challenges.insert_one(challenge_record)
-        
+
         # Send email invitations to friends
-        # Send invitations using real user name
         sender_display_name = current_user.full_name or current_user.username
         await send_challenge_invitations(
             challenge_record=challenge_record,
-            friend_emails=challenge_data.friends,
-            sender_name=sender_display_name
+            friend_emails_or_usernames=challenge_data.friends,
+            sender_name=sender_display_name,
         )
-        
-        # Remove MongoDB _id field
+
         challenge_record.pop("_id", None)
-        
         return challenge_record
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create challenge: {str(e)}")
+
+@app.post("/challenges/{challenge_id}/accept")
+async def accept_challenge(
+    challenge_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """User accepts a pending challenge. When >=2 users have accepted, activate the challenge
+    and deduct the stake from all accepted participants.
+    """
+    try:
+        challenge = await db.challenges.find_one({"id": challenge_id})
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+
+        if challenge.get("status") not in ["pending"]:
+            raise HTTPException(status_code=400, detail="Challenge is not pending")
+
+        # Mark acceptance
+        accepted = challenge.get("accepted", {})
+        accepted[current_user.username] = True
+        participants = set(challenge.get("participants", []))
+        participants.add(current_user.username)
+
+        # Update DB with acceptance
+        await db.challenges.update_one(
+            {"id": challenge_id},
+            {"$set": {"accepted": accepted, "participants": list(participants)}}
+        )
+
+        # Activate if at least two users have accepted
+        accepted_users = [u for u, ok in accepted.items() if ok]
+        if len(accepted_users) >= 2:
+            # Deduct stake from each accepted user now
+            for username in accepted_users:
+                user_doc = await db.users.find_one({"username": username})
+                if not user_doc:
+                    continue
+                if user_doc.get("sol_balance", 0.0) < challenge["stake"]:
+                    raise HTTPException(status_code=400, detail=f"User {username} has insufficient balance to activate")
+            for username in accepted_users:
+                await db.users.update_one(
+                    {"username": username},
+                    {"$inc": {"sol_balance": -challenge["stake"]}}
+                )
+
+            await db.challenges.update_one(
+                {"id": challenge_id},
+                {"$set": {"status": "active", "activated_at": datetime.utcnow().isoformat()}}
+            )
+
+        return {"success": True, "status": "active" if len(accepted_users) >= 2 else "pending"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to accept challenge: {str(e)}")
 
 @app.post("/challenges/{challenge_id}/start")
 async def start_challenge(
@@ -1547,6 +1694,41 @@ async def send_challenge_invites(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send invites: {str(e)}")
 
+@app.get("/challenges/open")
+async def get_open_challenges(current_user: User = Depends(get_current_user)):
+    """Get all open (pending) challenges that other users can accept"""
+    try:
+        # Get pending challenges that user is not already participating in
+        challenges = await db.challenges.find({
+            "status": "pending",
+            "participants": {"$ne": current_user.username}  # User is not already participating
+        }).sort("created_at", -1).to_list(50)
+        
+        # Remove MongoDB _id fields and format for frontend
+        for challenge in challenges:
+            challenge.pop("_id", None)
+            
+            # Ensure required fields exist for frontend compatibility  
+            if "metrics" not in challenge:
+                challenge["metrics"] = [challenge.get("type", "steps")]
+            if "stake" not in challenge:
+                challenge["stake"] = challenge.get("stakeAmount", 0)
+            if "startsAt" not in challenge:
+                challenge["startsAt"] = challenge.get("created_at")
+            if "endsAt" not in challenge:
+                # Calculate end time based on duration
+                from datetime import datetime, timedelta
+                start_time = datetime.fromisoformat(challenge.get("created_at", datetime.utcnow().isoformat()))
+                end_time = start_time + timedelta(hours=challenge.get("duration", 24))
+                challenge["endsAt"] = end_time.isoformat()
+            
+            # Add participant count
+            challenge["participantCount"] = len(challenge.get("participants", []))
+            
+        return challenges
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch open challenges: {str(e)}")
+
 @app.get("/challenges/user")
 async def get_user_challenges(current_user: User = Depends(get_current_user)):
     """Get challenges for the current user"""
@@ -1554,10 +1736,10 @@ async def get_user_challenges(current_user: User = Depends(get_current_user)):
         # Get challenges where user is creator or participant
         challenges = await db.challenges.find({
             "$or": [
-                {"createdBy": current_user.username},
+                {"creator_username": current_user.username},
                 {"participants": current_user.username}
             ]
-        }).sort("createdAt", -1).to_list(50)
+        }).sort("created_at", -1).to_list(50)
         
         # Remove MongoDB _id fields and format daily completions
         for challenge in challenges:

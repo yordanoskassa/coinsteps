@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { api as apiClient } from '../services/apiClient';
 import Avatar from '../components/Avatar';
+import { solPriceService } from '../services/solPriceService';
 
 interface WalletInfo {
   public_key: string;
@@ -51,11 +52,21 @@ export default function WalletScreen() {
   const [memo, setMemo] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
-  const [solToUsdRate] = useState(20); // Mock SOL to USD rate
+  const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
 
   useEffect(() => {
     loadWalletData();
+    fetchSolPrice();
   }, []);
+
+  const fetchSolPrice = async () => {
+    try {
+      const price = await solPriceService.getCurrentPrice();
+      setSolUsdPrice(price);
+    } catch (error) {
+      console.warn('Failed to fetch SOL price:', error);
+    }
+  };
 
   const loadWalletData = async () => {
     try {
@@ -98,7 +109,10 @@ export default function WalletScreen() {
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    loadWalletData();
+    Promise.all([
+      loadWalletData(),
+      fetchSolPrice()
+    ]);
   };
 
   const claimInitialAirdrop = async () => {
@@ -107,7 +121,7 @@ export default function WalletScreen() {
       const response = await apiClient.post('/wallet/claim-airdrop');
       Alert.alert(
         'Welcome Bonus Claimed! 🎉', 
-        `0.5 SOL has been added to your wallet.\n\nTransaction: ${response.data.transaction_signature.slice(0, 8)}...`,
+        `1.0 SOL has been added to your wallet.\n\nTransaction: ${response.data.transaction_signature.slice(0, 8)}...`,
         [{ text: 'OK', style: 'default' }]
       );
       // Refresh both wallet data and user data to update the UI
@@ -236,7 +250,9 @@ export default function WalletScreen() {
               <Ionicons name="wallet" size={24} color={colors.neon} />
               <Text style={styles.balanceLabel}>Wallet Balance</Text>
             </View>
-            <Text style={styles.balanceAmountUSD}>${(walletInfo.balance * solToUsdRate).toFixed(2)}</Text>
+            <Text style={styles.balanceAmountUSD}>
+              {solUsdPrice ? `$${(walletInfo.balance * solUsdPrice).toFixed(2)}` : `${walletInfo.balance.toFixed(4)} SOL`}
+            </Text>
             <Text style={styles.balanceAmountSOL}>{walletInfo.balance.toFixed(4)} SOL</Text>
             <Text style={styles.walletAddress}>
               {formatAddress(walletInfo.public_key)}
@@ -258,7 +274,7 @@ export default function WalletScreen() {
                 <Ionicons name="gift" size={20} color="#1A1F3A" />
               )}
               <Text style={styles.claimButtonText}>
-                {isClaiming ? 'Claiming...' : 'Claim Welcome Bonus (0.5 SOL)'}
+                {isClaiming ? 'Claiming...' : 'Claim Welcome Bonus (1.0 SOL)'}
               </Text>
             </TouchableOpacity>
           )}

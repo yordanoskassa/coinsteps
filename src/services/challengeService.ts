@@ -203,6 +203,28 @@ export class ChallengeService {
     return user.sol_balance || 0;
   }
 
+  static async acceptChallenge(challengeId: string): Promise<{ success: boolean; status: string }> {
+    const token = await this.getAuthToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/challenges/${challengeId}/accept`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to accept challenge');
+    }
+
+    return await response.json();
+  }
+
   static async joinChallenge(challengeId: string): Promise<{ success: boolean }> {
     const token = await this.getAuthToken();
     if (!token) {
@@ -312,6 +334,28 @@ export class ChallengeService {
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || 'Failed to check progress');
+    }
+
+    return await response.json();
+  }
+
+  static async getOpenChallenges(): Promise<Challenge[]> {
+    const token = await this.getAuthToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/challenges/open`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to fetch open challenges');
     }
 
     return await response.json();

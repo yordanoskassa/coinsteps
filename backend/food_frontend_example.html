@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Health Rater</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .input-section {
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            transform: none;
+            cursor: not-allowed;
+        }
+
+        .image-upload {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .image-upload:hover {
+            border-color: #4CAF50;
+        }
+
+        .image-upload.dragover {
+            border-color: #4CAF50;
+            background-color: #f0f8f0;
+        }
+
+        .results {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 30px;
+            display: none;
+        }
+
+        .score-display {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .score-circle {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            margin: 0 auto 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: white;
+        }
+
+        .score-excellent { background: linear-gradient(135deg, #4CAF50, #45a049); }
+        .score-good { background: linear-gradient(135deg, #8BC34A, #7CB342); }
+        .score-fair { background: linear-gradient(135deg, #FFC107, #FFB300); }
+        .score-poor { background: linear-gradient(135deg, #FF9800, #F57C00); }
+        .score-very-poor { background: linear-gradient(135deg, #F44336, #D32F2F); }
+
+        .nutrition-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .nutrition-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .nutrition-item.penalty {
+            border-left-color: #f44336;
+        }
+
+        .section {
+            margin: 25px 0;
+        }
+
+        .section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .list-item {
+            background: white;
+            margin: 8px 0;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #f44336;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍎 Food Health Rater</h1>
+            <p>Get comprehensive nutritional analysis and health scores for any food</p>
+        </div>
+
+        <div class="content">
+            <div class="input-section">
+                <div class="form-group">
+                    <label for="foodName">Food Name *</label>
+                    <input type="text" id="foodName" placeholder="e.g., Greek Yogurt with Berries" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" rows="3" placeholder="Describe the food, preparation method, ingredients..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="ingredients">Ingredients (comma-separated)</label>
+                    <textarea id="ingredients" rows="2" placeholder="e.g., greek yogurt, blueberries, strawberries, honey"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="servingSize">Serving Size</label>
+                    <input type="text" id="servingSize" placeholder="e.g., 1 cup (245g)">
+                </div>
+
+                <div class="form-group">
+                    <label for="brand">Brand (optional)</label>
+                    <input type="text" id="brand" placeholder="e.g., Chobani, McDonald's">
+                </div>
+
+                <button class="btn" onclick="analyzeFood()">📊 Analyze Food</button>
+                <button class="btn" onclick="clearForm()">🔄 Clear</button>
+            </div>
+
+            <div class="input-section">
+                <h3>Or Upload Food Image</h3>
+                <div class="image-upload" id="imageUpload" onclick="document.getElementById('imageInput').click()">
+                    <p>📸 Click to upload or drag & drop a food image</p>
+                    <input type="file" id="imageInput" accept="image/*" style="display: none;" onchange="analyzeImage()">
+                </div>
+            </div>
+
+            <div id="results" class="results"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        // Quick test foods
+        const testFoods = [
+            {
+                name: "Quinoa Salad",
+                description: "Quinoa with mixed vegetables and olive oil dressing",
+                ingredients: "quinoa, cucumber, tomatoes, olive oil, lemon juice",
+                serving: "1 cup"
+            },
+            {
+                name: "Big Mac",
+                description: "McDonald's Big Mac burger",
+                ingredients: "beef patty, bun, special sauce, lettuce, cheese",
+                serving: "1 burger",
+                brand: "McDonald's"
+            },
+            {
+                name: "Greek Yogurt with Berries",
+                description: "Plain Greek yogurt with fresh berries",
+                ingredients: "greek yogurt, blueberries, strawberries",
+                serving: "1 cup"
+            }
+        ];
+
+        function populateTestFood(index) {
+            const food = testFoods[index];
+            document.getElementById('foodName').value = food.name;
+            document.getElementById('description').value = food.description;
+            document.getElementById('ingredients').value = food.ingredients;
+            document.getElementById('servingSize').value = food.serving;
+            document.getElementById('brand').value = food.brand || '';
+        }
+
+        async function analyzeFood() {
+            const foodName = document.getElementById('foodName').value.trim();
+            if (!foodName) {
+                alert('Please enter a food name');
+                return;
+            }
+
+            const data = {
+                food_name: foodName,
+                description: document.getElementById('description').value.trim() || null,
+                ingredients: document.getElementById('ingredients').value.trim() ? 
+                    document.getElementById('ingredients').value.split(',').map(i => i.trim()) : null,
+                serving_size: document.getElementById('servingSize').value.trim() || null,
+                brand: document.getElementById('brand').value.trim() || null
+            };
+
+            showLoading();
+
+            try {
+                const response = await fetch(`${API_BASE}/analyze-food`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                displayResults(result);
+            } catch (error) {
+                showError(`Error analyzing food: ${error.message}`);
+            }
+        }
+
+        async function analyzeImage() {
+            const fileInput = document.getElementById('imageInput');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+
+            showLoading();
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE}/analyze-food-image`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                displayResults(result);
+            } catch (error) {
+                showError(`Error analyzing image: ${error.message}`);
+            }
+        }
+
+        function showLoading() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing food with AI...</p>
+                </div>
+            `;
+            resultsDiv.style.display = 'block';
+        }
+
+        function showError(message) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `<div class="error">${message}</div>`;
+            resultsDiv.style.display = 'block';
+        }
+
+        function displayResults(result) {
+            const score = result.health_score;
+            let scoreClass = 'score-fair';
+            let rating = 'Fair';
+
+            if (score >= 85) {
+                scoreClass = 'score-excellent';
+                rating = 'Excellent';
+            } else if (score >= 70) {
+                scoreClass = 'score-good';
+                rating = 'Good';
+            } else if (score >= 50) {
+                scoreClass = 'score-fair';
+                rating = 'Fair';
+            } else if (score >= 30) {
+                scoreClass = 'score-poor';
+                rating = 'Poor';
+            } else {
+                scoreClass = 'score-very-poor';
+                rating = 'Very Poor';
+            }
+
+            const nutritionScores = result.nutrition_scores;
+            
+            const html = `
+                <div class="score-display">
+                    <div class="score-circle ${scoreClass}">
+                        ${score}/100
+                    </div>
+                    <h2>${result.food_name}</h2>
+                    <p><strong>Health Rating: ${rating}</strong></p>
+                </div>
+
+                <div class="section">
+                    <h3>📊 Nutrition Breakdown</h3>
+                    <div class="nutrition-grid">
+                        <div class="nutrition-item">
+                            <strong>Fiber Score</strong><br>
+                            ${nutritionScores.fiber_score}/20 points
+                        </div>
+                        <div class="nutrition-item">
+                            <strong>Protein Score</strong><br>
+                            ${nutritionScores.protein_score}/15 points
+                        </div>
+                        <div class="nutrition-item">
+                            <strong>Healthy Fats</strong><br>
+                            ${nutritionScores.healthy_fats_score}/15 points
+                        </div>
+                        <div class="nutrition-item">
+                            <strong>Vitamins & Minerals</strong><br>
+                            ${nutritionScores.vitamins_minerals_score}/15 points
+                        </div>
+                        <div class="nutrition-item">
+                            <strong>Antioxidants</strong><br>
+                            ${nutritionScores.antioxidants_score}/10 points
+                        </div>
+                        <div class="nutrition-item penalty">
+                            <strong>Sugar Penalty</strong><br>
+                            ${nutritionScores.sugar_penalty} points
+                        </div>
+                        <div class="nutrition-item penalty">
+                            <strong>Sodium Penalty</strong><br>
+                            ${nutritionScores.sodium_penalty} points
+                        </div>
+                        <div class="nutrition-item penalty">
+                            <strong>Processing Penalty</strong><br>
+                            ${nutritionScores.processing_penalty} points
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>🔬 Analysis</h3>
+                    <div class="list-item">
+                        ${result.analysis}
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>✅ Health Benefits</h3>
+                    ${result.health_benefits.map(benefit => 
+                        `<div class="list-item">${benefit}</div>`
+                    ).join('')}
+                </div>
+
+                <div class="section">
+                    <h3>⚠️ Health Concerns</h3>
+                    ${result.health_concerns.map(concern => 
+                        `<div class="list-item">${concern}</div>`
+                    ).join('')}
+                </div>
+
+                <div class="section">
+                    <h3>💡 Recommendations</h3>
+                    ${result.recommendations.map(rec => 
+                        `<div class="list-item">${rec}</div>`
+                    ).join('')}
+                </div>
+
+                <div class="section">
+                    <h3>🔄 Better Alternatives</h3>
+                    ${result.better_alternatives.map(alt => 
+                        `<div class="list-item">${alt}</div>`
+                    ).join('')}
+                </div>
+
+                <div class="section">
+                    <h3>🥄 Portion Advice</h3>
+                    <div class="list-item">
+                        ${result.portion_advice}
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('results').innerHTML = html;
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function clearForm() {
+            document.getElementById('foodName').value = '';
+            document.getElementById('description').value = '';
+            document.getElementById('ingredients').value = '';
+            document.getElementById('servingSize').value = '';
+            document.getElementById('brand').value = '';
+            document.getElementById('imageInput').value = '';
+            document.getElementById('results').style.display = 'none';
+        }
+
+        // Add drag and drop for images
+        const imageUpload = document.getElementById('imageUpload');
+        
+        imageUpload.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            imageUpload.classList.add('dragover');
+        });
+
+        imageUpload.addEventListener('dragleave', () => {
+            imageUpload.classList.remove('dragover');
+        });
+
+        imageUpload.addEventListener('drop', (e) => {
+            e.preventDefault();
+            imageUpload.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                document.getElementById('imageInput').files = files;
+                analyzeImage();
+            }
+        });
+
+        // Add quick test buttons
+        window.onload = function() {
+            const header = document.querySelector('.header');
+            header.innerHTML += `
+                <div style="margin-top: 20px;">
+                    <small>Quick tests:</small><br>
+                    <button class="btn" style="padding: 8px 16px; font-size: 14px; margin: 5px;" onclick="populateTestFood(0)">🥗 Quinoa Salad</button>
+                    <button class="btn" style="padding: 8px 16px; font-size: 14px; margin: 5px;" onclick="populateTestFood(1)">🍔 Big Mac</button>
+                    <button class="btn" style="padding: 8px 16px; font-size: 14px; margin: 5px;" onclick="populateTestFood(2)">🥛 Greek Yogurt</button>
+                </div>
+            `;
+        };
+    </script>
+</body>
+</html>
