@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7
+    container_name: coinsteps-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: stepbet
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - coinsteps-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # CoinSteps Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: coinsteps-backend
+    restart: unless-stopped
+    environment:
+      # Database
+      MONGODB_URL: mongodb://mongodb:27017/stepbet
+
+      # Security (MUST override in production)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      WALLET_ENCRYPTION_KEY: ${WALLET_ENCRYPTION_KEY:-dev-32-char-encryption-key}
+
+      # Solana (devnet for development)
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+
+      # AI Services
+      ASI_ONE_API_KEY: ${ASI_ONE_API_KEY:-}
+
+      # Email
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
+      AGENTMAIL_INBOX_ID: ${AGENTMAIL_INBOX_ID:-notis@agentmail.to}
+
+      # Airdrop
+      AIRDROP_MODE: ${AIRDROP_MODE:-auto}
+      AIRDROP_TREASURY_SECRET_B64: ${AIRDROP_TREASURY_SECRET_B64:-}
+      AIRDROP_TREASURY_SECRET_JSON: ${AIRDROP_TREASURY_SECRET_JSON:-}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - coinsteps-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  mongodb_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  coinsteps-network:
+    driver: bridge
