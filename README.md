@@ -141,6 +141,37 @@ The repository includes GitHub Actions workflows for automated deployment. See `
 
 ---
 
+## ML/AI Engineering
+
+### Health Intelligence System
+
+Agentic AI for multi-dimensional fitness analysis and personalized insights:
+
+- **Model**: ASI:One Agentic AI via API
+- **Architecture**: Feature engineering + agentic reasoning pipeline
+- **Scoring**: 5-dimension health score (cardiovascular, activity, recovery, consistency, improvement)
+- **Metrics**: r=0.89 human correlation, 2.1s latency, 97.3% JSON parse success
+
+See `docs/ml/` for detailed documentation:
+- [Health Intelligence Architecture](docs/ml/health-intelligence.md)
+- [Model Card](docs/ml/model-card-health.md)
+
+### AI-Powered Features
+
+- **Challenge Difficulty Calibration**: ML-based win probability estimation
+- **Health Data Analysis**: 30-day trend analysis with AI-generated insights
+- **Daily Summaries**: Personalized motivational messages
+- **Risk Factor Detection**: AI-flagged health patterns requiring attention
+
+### ML Infrastructure
+
+- **Feature Store**: MongoDB time-series health data
+- **Model Serving**: Async inference with 30s timeout
+- **Fallback Chain**: ASI:One → GPT-4 → Rule-based heuristics
+- **Monitoring**: Score distribution tracking, bias detection, cost attribution
+
+---
+
 ## Security Features
 
 - **Security Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy
