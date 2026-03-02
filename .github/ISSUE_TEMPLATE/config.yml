@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: CoinSteps Documentation
+    url: https://github.com/yordanoskassa/coinsteps/blob/main/README.md
+    about: Check the README for setup instructions
