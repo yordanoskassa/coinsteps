@@ -1,5 +1,5 @@
 from datetime import datetime, date, timedelta
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -9,6 +9,8 @@ import os
 import uuid
 import time
 from dotenv import load_dotenv
+from collections import defaultdict
+from functools import wraps
 from auth import (
     User, UserCreate, UserLogin, UserInDB, Token,
     verify_password, get_password_hash, create_access_token, verify_token
@@ -24,7 +26,47 @@ DB_NAME = os.getenv("DB_NAME", "stepbet")
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="StepBet API")
+# Rate limiting storage
+rate_limit_storage = defaultdict(list)
+
+# --- Rate Limiting ---
+def rate_limit(max_requests: int = 100, window: int = 60):
+    """
+    Rate limiting decorator using in-memory storage
+    max_requests: Maximum requests allowed in the time window
+    window: Time window in seconds
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            # Get client IP
+            client_ip = request.client.host if request.client else "unknown"
+            route = request.url.path
+            key = f"{client_ip}:{route}"
+            
+            now = time.time()
+            
+            # Clean old requests outside the window
+            rate_limit_storage[key] = [
+                req_time for req_time in rate_limit_storage[key]
+                if now - req_time < window
+            ]
+            
+            # Check if limit exceeded
+            if len(rate_limit_storage[key]) >= max_requests:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded. Try again in {window} seconds."
+                )
+            
+            # Add current request
+            rate_limit_storage[key].append(now)
+            
+            return await func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+app = FastAPI(title="StepBet API", version="1.0.0")
 security = HTTPBearer(auto_error=False)
 
 app.add_middleware(
@@ -34,6 +76,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*", "ngrok-skip-browser-warning"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+    
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+    
+    # XSS protection
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    
+    # Referrer policy
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    
+    return response
 
 
 class StepData(BaseModel):
